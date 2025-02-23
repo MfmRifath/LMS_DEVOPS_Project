@@ -8,19 +8,19 @@ ENV PIP_NO_CACHE_DIR=off
 ENV PIPENV_VENV_IN_PROJECT=1
 
 # Set the working directory
-WORKDIR /LMS_BACKEND
+WORKDIR /LMS_DEVOPS_PROJECT
 
 # Install system dependencies
 RUN pip install --upgrade pip && pip install pipenv
 
 # Copy Pipfile and Pipfile.lock
-COPY Pipfile Pipfile.lock /LMS_BACKEND/
+COPY Pipfile Pipfile.lock /LMS_DEVOPS_PROJECT/
 
 # Install dependencies from Pipfile.lock
 RUN pipenv install --deploy
 
 # Copy project files
-COPY . /LMS_BACKEND/
+COPY . /LMS_DEVOPS_PROJECT/
 
 # Expose port 8000 for Django
 EXPOSE 8000

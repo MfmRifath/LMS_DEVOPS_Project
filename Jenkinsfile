@@ -3,13 +3,13 @@ pipeline {
 
     environment {
         IMAGE_NAME = "lms_django"
-        CONTAINER_NAME = "lms_django_container"
+        CONTAINER_NAME = "lms_django"
     }
 
     stages {
         stage('Clone Repository') {
             steps {
-                git branch: 'main', url: 'https://github.com/yourusername/lms_django.git'
+                git branch: 'main', url: 'https://github.com/MfmRifath/LMS_DEVOPS_Project/tree/main/lms_backend'
             }
         }
 

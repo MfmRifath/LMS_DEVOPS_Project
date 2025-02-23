@@ -42,7 +42,14 @@ INSTALLED_APPS = [
     'courses',
     'corsheaders',  # Django CORS Headers
     'rest_framework',  # Django REST Framework
+    'rest_framework.authtoken',
+    'dj_rest_auth',
+    'django.contrib.sites',  # Required by django-allauth
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
 ]
+SITE_ID = 1
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -54,6 +61,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'allauth.account.middleware.AccountMiddleware',  # Add this line
 ]
 MIDDLEWARE.insert(0, 'corsheaders.middleware.CorsMiddleware')
 ROOT_URLCONF = 'lms_backend.urls'

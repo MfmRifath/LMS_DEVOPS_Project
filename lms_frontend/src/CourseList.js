@@ -53,56 +53,104 @@ const CourseList = () => {
     };
 
     return (
-        <div>
-            <h1>Courses</h1>
+        <div className="container mx-auto px-4 py-8">
+            <h1 className="text-3xl font-bold text-center mb-8">Course Management</h1>
 
             {/* Add New Course */}
-            <div>
-                <h2>Add New Course</h2>
-                <input
-                    type="text"
-                    placeholder="Title"
-                    value={newCourse.title}
-                    onChange={(e) => setNewCourse({ ...newCourse, title: e.target.value })}
-                />
-                <input
-                    type="text"
-                    placeholder="Description"
-                    value={newCourse.description}
-                    onChange={(e) => setNewCourse({ ...newCourse, description: e.target.value })}
-                />
-                <button onClick={addCourse}>Add Course</button>
-            </div>
-
-            {/* List of Courses */}
-            <ul>
-                {courses.map(course => (
-                    <li key={course._id}>
-                        <strong>{course.title}</strong>
-                        <button onClick={() => setEditingCourse(course)}>Edit</button>
-                        <button onClick={() => deleteCourse(course._id)}>Delete</button>
-                    </li>
-                ))}
-            </ul>
-
-            {/* Edit Course */}
-            {editingCourse && (
-                <div>
-                    <h2>Edit Course</h2>
+            <div className="mb-8 bg-white shadow-md rounded-lg p-6">
+                <h2 className="text-xl font-semibold mb-4">Add New Course</h2>
+                <div className="flex flex-col gap-4">
                     <input
                         type="text"
                         placeholder="Title"
-                        value={editingCourse.title}
-                        onChange={(e) => setEditingCourse({ ...editingCourse, title: e.target.value })}
+                        value={newCourse.title}
+                        onChange={(e) => setNewCourse({ ...newCourse, title: e.target.value })}
+                        className="p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <input
                         type="text"
                         placeholder="Description"
-                        value={editingCourse.description}
-                        onChange={(e) => setEditingCourse({ ...editingCourse, description: e.target.value })}
+                        value={newCourse.description}
+                        onChange={(e) => setNewCourse({ ...newCourse, description: e.target.value })}
+                        className="p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
-                    <button onClick={editCourse}>Save Changes</button>
-                    <button onClick={() => setEditingCourse(null)}>Cancel</button>
+                    <button
+                        onClick={addCourse}
+                        className="bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 transition"
+                    >
+                        Add Course
+                    </button>
+                </div>
+            </div>
+
+            {/* List of Courses */}
+            <div className="bg-white shadow-md rounded-lg p-6">
+                <h2 className="text-xl font-semibold mb-4">Courses</h2>
+                <ul className="space-y-4">
+                    {courses.map(course => (
+                        <li
+                            key={course._id}
+                            className="flex justify-between items-center border-b pb-2 mb-2 last:border-b-0"
+                        >
+                            <div>
+                                <strong className="block text-lg">{course.title}</strong>
+                                <span className="text-gray-600 text-sm">{course.description}</span>
+                            </div>
+                            <div className="space-x-2">
+                                <button
+                                    onClick={() => setEditingCourse(course)}
+                                    className="bg-yellow-500 text-white py-1 px-3 rounded-md hover:bg-yellow-600 transition"
+                                >
+                                    Edit
+                                </button>
+                                <button
+                                    onClick={() => deleteCourse(course._id)}
+                                    className="bg-red-500 text-white py-1 px-3 rounded-md hover:bg-red-600 transition"
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        </li>
+                    ))}
+                </ul>
+            </div>
+
+            {/* Edit Course */}
+            {editingCourse && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                    <div className="bg-white p-6 rounded-lg shadow-lg w-96">
+                        <h2 className="text-xl font-semibold mb-4">Edit Course</h2>
+                        <div className="flex flex-col gap-4">
+                            <input
+                                type="text"
+                                placeholder="Title"
+                                value={editingCourse.title}
+                                onChange={(e) => setEditingCourse({ ...editingCourse, title: e.target.value })}
+                                className="p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <input
+                                type="text"
+                                placeholder="Description"
+                                value={editingCourse.description}
+                                onChange={(e) => setEditingCourse({ ...editingCourse, description: e.target.value })}
+                                className="p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <div className="flex justify-between">
+                                <button
+                                    onClick={editCourse}
+                                    className="bg-green-500 text-white py-2 px-4 rounded-md hover:bg-green-600 transition"
+                                >
+                                    Save Changes
+                                </button>
+                                <button
+                                    onClick={() => setEditingCourse(null)}
+                                    className="bg-gray-500 text-white py-2 px-4 rounded-md hover:bg-gray-600 transition"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

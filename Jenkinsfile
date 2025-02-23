@@ -9,7 +9,7 @@ pipeline {
     stages {
         stage('Clone Repository') {
             steps {
-                git branch: 'main', url: 'https://github.com/MfmRifath/LMS_DEVOPS_Project'
+                git branch: 'main', url: 'https://github.com/MfmRifath/LMS_DEVOPS_Project.git'
             }
         }
 

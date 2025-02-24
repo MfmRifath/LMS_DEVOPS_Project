@@ -9,5 +9,5 @@ services:
     environment:
       - MONGO_URI=mongodb://localhost:27017/lms_db  # Connect to local MongoDB
     volumes:
-      - .:/LMS_DEVOPS_PROJECT
-    command: pipenv run python manage.py runserver 0.0.0.0:8000
+      - .:/app
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]

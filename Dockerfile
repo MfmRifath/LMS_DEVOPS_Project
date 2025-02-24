@@ -1,29 +1,27 @@
-# Use the official Python image
-FROM python:3.12
-
-# Set environment variables to avoid Python bytecode creation
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PIP_NO_CACHE_DIR=off
-ENV PIPENV_VENV_IN_PROJECT=1
+# Use the official Python runtime image
+FROM python:3.13  
 
 # Set the working directory
-WORKDIR /LMS_DEVOPS_PROJECT
+WORKDIR /app
 
-# Install system dependencies
-RUN pip install --upgrade pip && pip install pipenv
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1  
 
-# Copy Pipfile and Pipfile.lock
-COPY Pipfile Pipfile.lock /LMS_DEVOPS_PROJECT/
+# Upgrade pip
+RUN pip install --upgrade pip  
 
-# Install dependencies from Pipfile.lock
-RUN pipenv install --deploy
+# Copy only requirements.txt first for better caching
+COPY requirements.txt /app/
 
-# Copy project files
-COPY . /LMS_DEVOPS_PROJECT/
+# Install dependencies using pip
+RUN pip install --no-cache-dir -r requirements.txt  
 
-# Expose port 8000 for Django
-EXPOSE 8000
+# Copy the rest of the Django project
+COPY . /app/
 
-# Run Django server
-CMD ["pipenv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
+# Expose the Django port
+EXPOSE 8000  
+
+# Run Django’s development server
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

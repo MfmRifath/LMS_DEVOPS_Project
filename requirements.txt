@@ -1,4 +1,8 @@
-Django>=4.0
+django==4.2.9  # Use your actual Django version
 pymongo
-djongo
+djangorestframework==3.14.0
 django-cors-headers==4.3.1
+django-filter==23.5
+djangorestframework-simplejwt==5.3.1
+pillow==10.2.0  # If you handle images
+psycopg2-binary==2.9.9  # If using PostgreSQL

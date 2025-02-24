@@ -4,7 +4,7 @@ pipeline {
     environment {
         IMAGE_NAME = "lms_django"
         CONTAINER_NAME = "lms_backend"
-        DOCKER_PATH = "/usr/bin/docker" // Correct Docker path for EC2
+        DOCKER_PATH = "/usr/local/bin/docker" // Correct Docker path for EC2
         EC2_USER = "ubuntu"
         EC2_HOST = "ec2-54-172-80-79.compute-1.amazonaws.com"
         SSH_KEY = "/var/lib/jenkins/.ssh/lms_django.pem"

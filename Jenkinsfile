@@ -25,13 +25,13 @@ pipeline {
         }
 
         stage('Build Docker Image on Mac') {
-            steps {
-                sh '''
-                cd $WORKSPACE/LMS_DEVOPS_Project
-                $DOCKER_PATH build -t $DOCKER_HUB_REPO:latest .
-                '''
-            }
+        steps {
+            sh '''
+            cd $WORKSPACE/LMS_DEVOPS_Project
+            $DOCKER_PATH build --platform=linux/amd64 -t $DOCKER_HUB_REPO:latest .
+            '''
         }
+}
 
         stage('Push Image to Docker Hub') {
             steps {

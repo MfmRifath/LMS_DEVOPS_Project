@@ -19,16 +19,7 @@ pipeline {
 
         stage('Build Docker Image on EC2') {
             steps {
-                sh "ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST 'cd /home/ubuntu/LMS_DEVOPS_Project && $DOCKER_PATH build -t $IMAGE_NAME .'"
-            }
-        }
-
-        stage('Stop and Remove Old Container on EC2') {
-            steps {
-                script {
-                    sh "ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST '$DOCKER_PATH stop $CONTAINER_NAME || true'"
-                    sh "ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST '$DOCKER_PATH rm $CONTAINER_NAME || true'"
-                }
+                sh "ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST 'cd /home/ubuntu/LMS_DEVOPS_Project && $DOCKER_PATH stop $CONTAINER_NAME || true && $DOCKER_PATH rm $CONTAINER_NAME || true && $DOCKER_PATH rmi $IMAGE_NAME || true && $DOCKER_PATH build -t $IMAGE_NAME .'"
             }
         }
 

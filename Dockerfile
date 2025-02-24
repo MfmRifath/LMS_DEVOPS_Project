@@ -23,5 +23,5 @@ COPY . /app/
 # Expose the Django port
 EXPOSE 8000  
 
-# Run Django’s development server
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+# Run Django migrations, collect static files, and start the server using gunicorn
+CMD ["sh", "-c", "python3 manage.py migrate && python3 manage.py collectstatic --noinput && gunicorn --bind 0.0.0.0:8000 your_project_name.wsgi:application"]

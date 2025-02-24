@@ -8,7 +8,7 @@ pipeline {
         EC2_USER = "ubuntu"
         EC2_HOST = "ec2-54-172-80-79.compute-1.amazonaws.com"
         SSH_KEY = "/var/lib/jenkins/.ssh/lms_django.pem"  // Update with your Mac's SSH key path
-        DOCKER_HUB_REPO = "mmfmrifath@gmail.com/lms_django"  // Update with your Docker Hub repo
+        DOCKER_HUB_REPO = "rifathmfm/lms_django"  // Update with your Docker Hub repo
     }
 
     stages {
@@ -38,7 +38,7 @@ pipeline {
             withCredentials([usernamePassword(credentialsId: 'docker-hub-password', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
                 sh '''
                 echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-                docker push mmfmrifath@gmail.com/lms_django:latest
+                docker push rifathmfm/lms_django:latest
                 '''
             }
         }

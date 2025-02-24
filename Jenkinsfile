@@ -45,49 +45,53 @@ pipeline {
         }
 
         stage('Deploy on EC2') {
-        steps {
-            sh '''
-            ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << EOF
-            set -e  # Exit script on errors
+    steps {
+        sh '''
+        ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << EOF
+        set -e  # Exit script on errors
+        set -x  # Enable debugging
 
-            echo "Checking if Docker is installed..."
-            if ! command -v docker &> /dev/null; then
-                echo "Installing Docker..."
-                sudo apt update
-                sudo apt install -y docker.io
-                sudo systemctl start docker
-                sudo systemctl enable docker
-                sudo usermod -aG docker ubuntu
-            else
-                echo "Docker is already installed."
-            fi
+        echo "Current directory: $(pwd)"
+        echo "Checking if Docker is installed..."
+        if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            sudo apt update
+            sudo apt install -y docker.io
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo usermod -aG docker ubuntu
+        else
+            echo "Docker is already installed."
+        fi
 
-            echo "Ensuring correct Docker permissions..."
-            sudo chmod 777 /var/run/docker.sock
+        echo "Ensuring correct Docker permissions..."
+        sudo chmod 777 /var/run/docker.sock
 
-            # Explicitly set DOCKER_HUB_REPO inside SSH session
-            DOCKER_HUB_REPO="${DOCKER_HUB_REPO}"
-            echo "Using Docker Hub Repository: $DOCKER_HUB_REPO"
+        # Explicitly set DOCKER_HUB_REPO inside SSH session
+        DOCKER_HUB_REPO="${DOCKER_HUB_REPO}"
+        echo "Using Docker Hub Repository: $DOCKER_HUB_REPO"
 
-            if [[ -z "$DOCKER_HUB_REPO" ]]; then
-                echo "Error: DOCKER_HUB_REPO is not set!"
-                exit 1
-            fi
+        if [[ -z "$DOCKER_HUB_REPO" ]]; then
+            echo "Error: DOCKER_HUB_REPO is not set!"
+            exit 1
+        fi
 
-    
+        echo "Pulling latest Docker image from Docker Hub..."
+        docker pull $DOCKER_HUB_REPO:latest
 
-            echo "Pulling latest Docker image from Docker Hub..."
-            docker pull $DOCKER_HUB_REPO:latest
+        echo "Stopping and removing existing container if it exists..."
+        docker stop $CONTAINER_NAME || true
+        docker rm $CONTAINER_NAME || true
 
-            echo "Running new container on EC2..."
-            docker run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME $DOCKER_HUB_REPO:latest
+        echo "Running new container on EC2..."
+        docker run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME $DOCKER_HUB_REPO:latest
 
-            echo "Deployment successful! Running containers:"
-            docker ps -a
-            EOF
-            '''
-        }
+        echo "Deployment successful! Running containers:"
+        docker ps -a
+        EOF
+        '''
     }
+}
         stage('Verify Deployment on EC2') {
             steps {
                 sh "ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST 'curl -I http://localhost:8000'"

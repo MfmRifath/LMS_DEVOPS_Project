@@ -45,35 +45,48 @@ pipeline {
         }
 
                 stage('Deploy on EC2') {
-            steps {
-                sh '''
-                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
-                # Install Docker if not already installed
-                if ! command -v docker &> /dev/null; then
-                    sudo apt update
-                    sudo apt install -y docker.io
-                    sudo systemctl start docker
-                    sudo systemctl enable docker
-                    sudo usermod -aG docker ubuntu
-                fi
+        steps {
+            sh '''
+            ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
+            set -e  # Exit script on any error
+            
+            # Install Docker if not already installed
+            if ! command -v docker &> /dev/null; then
+                sudo apt update
+                sudo apt install -y docker.io
+                sudo systemctl start docker
+                sudo systemctl enable docker
+                sudo usermod -aG docker ubuntu
+                newgrp docker  # Apply group changes
+            fi
 
-                # Find correct Docker path
-                DOCKER_CMD=$(command -v docker)
+            # Find the correct Docker path
+            DOCKER_CMD=$(which docker || echo "/usr/bin/docker")
+            echo "Using Docker Path: $DOCKER_CMD"
 
-                # Stop and remove existing container
-                $DOCKER_CMD stop $CONTAINER_NAME || true
-                $DOCKER_CMD rm $CONTAINER_NAME || true
+            # Ensure Docker is executable
+            if [ ! -x "$DOCKER_CMD" ]; then
+                echo "Docker is not executable at $DOCKER_CMD"
+                exit 1
+            fi
 
-                # Pull latest image from Docker Hub
-                $DOCKER_CMD pull $DOCKER_HUB_REPO:latest
+            # Stop and remove existing container
+            $DOCKER_CMD ps -a
+            $DOCKER_CMD stop $CONTAINER_NAME || true
+            $DOCKER_CMD rm -f $CONTAINER_NAME || true
 
-                # Run the new container
-                $DOCKER_CMD run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME $DOCKER_HUB_REPO:latest
-                EOF
-                '''
-            }
+            # Pull latest image from Docker Hub
+            $DOCKER_CMD pull $DOCKER_HUB_REPO:latest
+
+            # Run the new container
+            $DOCKER_CMD run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME $DOCKER_HUB_REPO:latest
+
+            # Verify container is running
+            $DOCKER_CMD ps -a
+            EOF
+            '''
         }
-
+    }
         stage('Verify Deployment on EC2') {
             steps {
                 sh "ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST 'curl -I http://localhost:8000'"

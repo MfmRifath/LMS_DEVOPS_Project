@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         IMAGE_NAME = "lms_django"
-        CONTAINER_NAME = "LMS_BACKEND"
+        CONTAINER_NAME = "lms_backend"
     }
 
     stages {

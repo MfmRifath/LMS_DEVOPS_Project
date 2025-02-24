@@ -47,15 +47,30 @@ pipeline {
         stage('Deploy on EC2') {
             steps {
                 sh '''
-                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << EOF
-                $DOCKER_PATH stop $CONTAINER_NAME || true
-                $DOCKER_PATH rm $CONTAINER_NAME || true
-                $DOCKER_PATH pull $DOCKER_HUB_REPO:latest
-                $DOCKER_PATH run -d -p 8000:8000 --name $CONTAINER_NAME --restart=always $DOCKER_HUB_REPO:latest
+                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
+                # Install Docker if not already installed
+                if ! command -v docker &> /dev/null; then
+                    sudo apt update
+                    sudo apt install -y docker.io
+                    sudo systemctl start docker
+                    sudo systemctl enable docker
+                    sudo usermod -aG docker ubuntu
+                fi
+
+                # Stop and remove existing container
+                /usr/bin/docker stop $CONTAINER_NAME || true
+                /usr/bin/docker rm $CONTAINER_NAME || true
+
+                # Pull latest image from Docker Hub
+                /usr/bin/docker pull $DOCKER_HUB_REPO:latest
+
+                # Run the new container
+                /usr/bin/docker run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME $DOCKER_HUB_REPO:latest
                 EOF
                 '''
             }
         }
+
 
         stage('Verify Deployment on EC2') {
             steps {

@@ -23,20 +23,22 @@ pipeline {
                 '''
             }
         }
-
         stage('Build and Push Docker Image') {
-    steps {
-        withCredentials([usernamePassword(credentialsId: 'docker-hub-password', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-            sh '''
-            cd $WORKSPACE/LMS_DEVOPS_Project
-            echo "$DOCKER_PASSWORD" | $DOCKER_PATH login -u "$DOCKER_USERNAME" --password-stdin
-            $DOCKER_PATH buildx create --use --name mybuilder || true
-            $DOCKER_PATH buildx use mybuilder
-            $DOCKER_PATH buildx build --platform=linux/amd64 --push -t $DOCKER_HUB_REPO:latest .
-            '''
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-password', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                    sh '''
+                    cd $WORKSPACE/LMS_DEVOPS_Project
+                    echo "$DOCKER_PASSWORD" | $DOCKER_PATH login -u "$DOCKER_USERNAME" --password-stdin
+                    
+                    # Build the image with platform flag
+                    $DOCKER_PATH build --platform=linux/amd64 -t $DOCKER_HUB_REPO:latest .
+                    
+                    # Push the image to Docker Hub
+                    $DOCKER_PATH push $DOCKER_HUB_REPO:latest
+                    '''
+                }
+            }
         }
-    }
-}
         stage('Deploy on EC2') {
             steps {
                 sh '''

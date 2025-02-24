@@ -44,7 +44,7 @@ pipeline {
         }
         }
 
-        stage('Deploy on EC2') {
+                stage('Deploy on EC2') {
             steps {
                 sh '''
                 ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
@@ -57,20 +57,22 @@ pipeline {
                     sudo usermod -aG docker ubuntu
                 fi
 
+                # Find correct Docker path
+                DOCKER_CMD=$(command -v docker)
+
                 # Stop and remove existing container
-                /usr/bin/docker stop $CONTAINER_NAME || true
-                /usr/bin/docker rm $CONTAINER_NAME || true
+                $DOCKER_CMD stop $CONTAINER_NAME || true
+                $DOCKER_CMD rm $CONTAINER_NAME || true
 
                 # Pull latest image from Docker Hub
-                /usr/bin/docker pull $DOCKER_HUB_REPO:latest
+                $DOCKER_CMD pull $DOCKER_HUB_REPO:latest
 
                 # Run the new container
-                /usr/bin/docker run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME $DOCKER_HUB_REPO:latest
+                $DOCKER_CMD run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME $DOCKER_HUB_REPO:latest
                 EOF
                 '''
             }
         }
-
 
         stage('Verify Deployment on EC2') {
             steps {

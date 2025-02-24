@@ -74,13 +74,13 @@ pipeline {
                 exit 1
             fi
 
-            echo "Checking if container $CONTAINER_NAME is running..."
-            if [ "$(docker ps -q -f name=$CONTAINER_NAME)" ]; then
+            echo "Checking if container $CONTAINER_NAME exists..."
+            if [ "$(docker ps -aq -f name=$CONTAINER_NAME)" ]; then
                 echo "Stopping and removing old container..."
                 docker stop $CONTAINER_NAME
                 docker rm -f $CONTAINER_NAME
             else
-                echo "No running container found. Skipping stop and remove."
+                echo "No existing container found. Skipping stop and remove."
             fi
 
             echo "Pulling latest Docker image from Docker Hub..."

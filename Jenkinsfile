@@ -34,14 +34,14 @@ pipeline {
         }
 
         stage('Push Image to Docker Hub') {
-            steps {
-                withCredentials([string(credentialsId: 'docker-hub-password', variable: 'DOCKER_PASSWORD')]) {
-                    sh '''
-                    echo "$DOCKER_PASSWORD" | $DOCKER_PATH login -u yourdockerhubusername --password-stdin
-                    $DOCKER_PATH push $DOCKER_HUB_REPO:latest
-                    '''
-                }
+        steps {
+            withCredentials([usernamePassword(credentialsId: 'docker-hub-password', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                sh '''
+                echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+                docker push mmfmrifath@gmail.com/lms_django:latest
+                '''
             }
+        }
         }
 
         stage('Deploy on EC2') {

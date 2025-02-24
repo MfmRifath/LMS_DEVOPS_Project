@@ -4,6 +4,7 @@ pipeline {
     environment {
         IMAGE_NAME = "lms_django"
         CONTAINER_NAME = "lms_backend"
+        DOCKER_PATH = "/usr/local/bin/docker" // Set Docker path manually
     }
 
     stages {
@@ -15,22 +16,22 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t $IMAGE_NAME ."
+                sh "$DOCKER_PATH build -t $IMAGE_NAME ."
             }
         }
 
         stage('Stop and Remove Old Container') {
             steps {
                 script {
-                    sh "docker stop $CONTAINER_NAME || true"
-                    sh "docker rm $CONTAINER_NAME || true"
+                    sh "$DOCKER_PATH stop $CONTAINER_NAME || true"
+                    sh "$DOCKER_PATH rm $CONTAINER_NAME || true"
                 }
             }
         }
 
         stage('Run New Container') {
             steps {
-                sh "docker run -d -p 8000:8000 --name $CONTAINER_NAME $IMAGE_NAME"
+                sh "$DOCKER_PATH run -d -p 8000:8000 --name $CONTAINER_NAME $IMAGE_NAME"
             }
         }
     }

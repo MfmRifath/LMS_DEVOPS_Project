@@ -114,24 +114,24 @@ EOF
             '''
         }
     }
-    stage('Diagnose Container') {
-        steps {
-            sh '''
-            ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST '
-            echo "Container logs:"
-            docker logs lms_backend
-            
-            echo "Container status:"
-            docker inspect -f "{{.State.Status}}" lms_backend
-            
-            echo "Network settings:"
-            docker inspect -f "{{.NetworkSettings.Ports}}" lms_backend
-            
-            echo "Process list inside container:"
-            docker exec lms_backend ps aux
-            '
-            '''
+        stage('Diagnose Container') {
+            steps {
+                sh '''
+                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST '
+                echo "Container logs:"
+                docker logs lms_backend
+                
+                echo "Container status:"
+                docker inspect -f "{{.State.Status}}" lms_backend
+                
+                echo "Network settings:"
+                docker inspect -f "{{.NetworkSettings.Ports}}" lms_backend
+                
+                echo "Process list inside container:"
+                docker exec lms_backend ps aux
+                '
+                '''
+            }
         }
-    }
     }
 }

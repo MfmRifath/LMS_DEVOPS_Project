@@ -47,7 +47,7 @@ pipeline {
         stage('Deploy on EC2') {
         steps {
             sh '''
-            ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOT'
+            ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
             # Define variables on the remote server
             DOCKER_HUB_REPO="rifathmfm/lms_django"
             CONTAINER_NAME="lms_backend"
@@ -82,7 +82,7 @@ pipeline {
 
             echo "Deployment successful! Running containers:"
             docker ps -a
-            EOT
+            EOF
             '''
         }
     }

@@ -50,41 +50,44 @@ pipeline {
             ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
             set -e  # Exit script on errors
 
-            # Ensure Docker is installed
+            echo "Updating package lists..."
+            sudo apt update
+
+            echo "Checking for existing Docker installation..."
             if ! command -v docker &> /dev/null; then
-                sudo apt update
+                echo "Docker not found. Installing..."
                 sudo apt install -y docker.io
                 sudo systemctl start docker
                 sudo systemctl enable docker
                 sudo usermod -aG docker ubuntu
+            else
+                echo "Docker is already installed."
             fi
 
-            # Fix Docker permissions
-            sudo chmod +x /usr/bin/docker
-            sudo chown root:docker /usr/bin/docker
+            echo "Ensuring correct Docker permissions..."
+            sudo chown ubuntu:docker $(which docker)
+            sudo chmod 777 /var/run/docker.sock  # Allow Docker access
 
-            # Find the correct Docker path
-            DOCKER_CMD=$(command -v docker)
+            echo "Finding correct Docker path..."
+            DOCKER_CMD=$(command -v docker || echo "/usr/bin/docker")
             echo "Using Docker Path: $DOCKER_CMD"
 
-            # Ensure Docker is executable
             if [ ! -x "$DOCKER_CMD" ]; then
                 echo "Docker is not executable at $DOCKER_CMD"
                 exit 1
             fi
 
-            # Stop and remove existing container
-            $DOCKER_CMD ps -a
-            $DOCKER_CMD stop $CONTAINER_NAME || true
-            $DOCKER_CMD rm -f $CONTAINER_NAME || true
+            echo "Stopping and removing old containers..."
+            $DOCKER_CMD ps -aq | xargs -r $DOCKER_CMD stop || true
+            $DOCKER_CMD ps -aq | xargs -r $DOCKER_CMD rm -f || true
 
-            # Pull latest image from Docker Hub
+            echo "Pulling latest Docker image from Docker Hub..."
             $DOCKER_CMD pull $DOCKER_HUB_REPO:latest
 
-            # Run the new container
+            echo "Running new container..."
             $DOCKER_CMD run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME $DOCKER_HUB_REPO:latest
 
-            # Verify container is running
+            echo "Deployment successful! Verifying running containers..."
             $DOCKER_CMD ps -a
             EOF
             '''

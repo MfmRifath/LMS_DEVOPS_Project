@@ -44,24 +44,27 @@ pipeline {
         }
         }
 
-                stage('Deploy on EC2') {
+        stage('Deploy on EC2') {
         steps {
             sh '''
             ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
-            set -e  # Exit script on any error
-            
-            # Install Docker if not already installed
+            set -e  # Exit script on errors
+
+            # Ensure Docker is installed
             if ! command -v docker &> /dev/null; then
                 sudo apt update
                 sudo apt install -y docker.io
                 sudo systemctl start docker
                 sudo systemctl enable docker
                 sudo usermod -aG docker ubuntu
-                newgrp docker  # Apply group changes
             fi
 
+            # Fix Docker permissions
+            sudo chmod +x /usr/bin/docker
+            sudo chown root:docker /usr/bin/docker
+
             # Find the correct Docker path
-            DOCKER_CMD=$(which docker || echo "/usr/bin/docker")
+            DOCKER_CMD=$(command -v docker)
             echo "Using Docker Path: $DOCKER_CMD"
 
             # Ensure Docker is executable

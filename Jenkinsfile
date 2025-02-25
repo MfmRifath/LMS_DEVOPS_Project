@@ -254,8 +254,9 @@ EOL'
             steps {
                 sshagent(['deploy-key-id']) {
                     // Create a backup script
+                   
                     sh """
-                    ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > ${APP_DIR}/backup_mongodb.sh << EOL
+ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > \${APP_DIR}/backup_mongodb.sh << EOL
 #!/bin/bash
 # Load environment variables
 source \${APP_DIR}/.env
@@ -276,7 +277,7 @@ ls -tp \$BACKUP_DIR/*.gz | grep -v '/$' | tail -n +8 | xargs -I {} rm -- {}
 
 echo "Backup completed: \$BACKUP_FILE"
 EOL'
-                    """
+"""
                     
                     // Make the script executable
                     sh """

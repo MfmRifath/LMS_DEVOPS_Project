@@ -82,7 +82,7 @@ EOL
                 # Execute the script on the EC2 instance with the correct MongoDB URI
                 ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST "
                     # Create a virtual environment and install pymongo
-                    python3 -m venv /tmp/mongo_test_env
+                    python -m venv /tmp/mongo_test_env
                     source /tmp/mongo_test_env/bin/activate
                     pip install pymongo
 

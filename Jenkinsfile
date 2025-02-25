@@ -212,42 +212,55 @@ EOF
         }
 
         stage('Debug Django Setup') {
-            steps {
-                sh '''
-                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
-                # Create a test environment
-                mkdir -p ~/django_test
-                cd ~/django_test
-                
-                # Clone the repository
-                git clone https://github.com/MfmRifath/LMS_DEVOPS_Project.git .
-                
-                # Create a virtual environment
-                python3 -m venv venv
-                source venv/bin/activate
-                
-                # Install dependencies
-                pip install -r requirements.txt
-                
-                # Create a test environment file
-                cat > .env << EOL
+    steps {
+        sh '''
+        ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
+        # Create a test environment directory
+        mkdir -p ~/django_test
+        cd ~/django_test
+
+        # Install python3-venv if not installed
+        sudo apt update
+        sudo apt install -y python3-venv
+
+        # Clone the repository (or update if it already exists)
+        if [ ! -d "./LMS_DEVOPS_Project" ]; then
+            git clone https://github.com/MfmRifath/LMS_DEVOPS_Project.git
+            cd LMS_DEVOPS_Project
+        else
+            cd LMS_DEVOPS_Project && git pull origin main
+        fi
+
+        # Create a virtual environment
+        python3 -m venv venv
+        if [ ! -f "venv/bin/python3" ]; then
+            echo "Virtual environment creation failed!"
+            exit 1
+        fi
+
+        # Activate the virtual environment and install dependencies
+        source venv/bin/activate
+        pip install -r requirements.txt
+
+        # Create a test environment file with necessary environment variables
+        cat > .env << EOL
 MONGO_URI='${MONGO_URI}'
 SECRET_KEY='${SECRET_KEY}'
 DEBUG='1'
 DJANGO_ALLOWED_HOSTS='localhost,127.0.0.1'
 EOL
-                
-                # Try to run a simple Django command to check settings
-                echo "=== TESTING DJANGO SETTINGS ==="
-                export MONGO_URI='${MONGO_URI}'
-                export SECRET_KEY='${SECRET_KEY}'
-                export DEBUG='1'
-                export DJANGO_ALLOWED_HOSTS='localhost,127.0.0.1'
-                python manage.py check --verbosity 2
+
+        # Export variables and test Django settings
+        echo "=== TESTING DJANGO SETTINGS ==="
+        export MONGO_URI='${MONGO_URI}'
+        export SECRET_KEY='${SECRET_KEY}'
+        export DEBUG='1'
+        export DJANGO_ALLOWED_HOSTS='localhost,127.0.0.1'
+        python manage.py check --verbosity 2
 EOF
-                '''
-            }
-        }
+        '''
+    }
+}
 
         stage('Verify Deployment on EC2') {
             steps {

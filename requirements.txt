@@ -6,4 +6,4 @@ django-filter==23.5
 djangorestframework-simplejwt==5.3.1
 pillow==10.2.0  # If you handle images
 psycopg2-binary==2.9.9  # If using PostgreSQL
-dj-rest-auth==2.1.0
+dj-rest-auth==2.1.1

@@ -234,12 +234,12 @@ EOL'
                 }
             }
         }
-
-        stage('Setup MongoDB Backup') {
-            steps {
-                sshagent(['deploy-key-id']) {
-                    sh """
-                    ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > ${APP_DIR}/backup_mongodb.sh << EOL
+stage('Setup MongoDB Backup') {
+    steps {
+        sshagent(['deploy-key-id']) {
+            // Create a backup script
+            sh """
+            ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > \${APP_DIR}/backup_mongodb.sh << EOL
 #!/bin/bash
 # Load environment variables
 source \${APP_DIR}/.env
@@ -256,21 +256,25 @@ BACKUP_FILE="\$BACKUP_DIR/mongodb_\${TIMESTAMP}.gz"
 mongodump --uri="\$MONGO_URI" --gzip --archive="\$BACKUP_FILE"
 
 # Clean up old backups (keep only the last 7)
-ls -tp \$BACKUP_DIR/*.gz | grep -v '/$' | tail -n +8 | xargs -I {} rm -- {}
+ls -tp \$BACKUP_DIR/*.gz | grep -v '/\$' | tail -n +8 | xargs -I {} rm -- {}
 
 echo "Backup completed: \$BACKUP_FILE"
 EOL'
-                    """
-                    sh """
-                    ssh \${REMOTE_USER}@\${REMOTE_HOST} 'chmod +x \${APP_DIR}/backup_mongodb.sh'
-                    """
-                    sh """
-                    ssh ${REMOTE_USER}@${REMOTE_HOST} '(crontab -l 2>/dev/null || echo "") | grep -v "backup_mongodb.sh" | 
-                    { cat; echo "0 2 * * * ${APP_DIR}/backup_mongodb.sh >> ${APP_DIR}/backup.log 2>&1"; } | crontab -'
-                    """
-                }
-            }
+"""
+
+            // Make the script executable
+            sh """
+            ssh ${REMOTE_USER}@${REMOTE_HOST} 'chmod +x \${APP_DIR}/backup_mongodb.sh'
+            """
+
+            // Set up a daily cron job
+            sh """
+            ssh ${REMOTE_USER}@${REMOTE_HOST} '(crontab -l 2>/dev/null || echo "") | grep -v "backup_mongodb.sh" | 
+            { cat; echo "0 2 * * * \${APP_DIR}/backup_mongodb.sh >> \${APP_DIR}/backup.log 2>&1"; } | crontab -'
+            """
         }
+    }
+}
     }
 
     post {

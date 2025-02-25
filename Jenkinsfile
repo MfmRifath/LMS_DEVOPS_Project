@@ -10,7 +10,7 @@ pipeline {
         SSH_KEY            = "/var/lib/jenkins/.ssh/lms_django.pem"  // Update with your Mac's SSH key path
         DOCKER_HUB_REPO    = "rifathmfm/lms_django"
         // Use the corrected MongoDB URI with the encoded "@" character in the password
-        MONGO_URI          = "mongodb+srv://MFM.Rifath:3853532%40Rr@cluster0.7n8xk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+        MONGO_URI          = "mongodb+srv://rifath:3853532@cluster0.7n8xk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
         SECRET_KEY         = credentials('django-secret-key')
         DJANGO_ALLOWED_HOSTS = "54.172.80.79,your-domain.com"
         DEBUG              = "0"

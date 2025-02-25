@@ -85,7 +85,7 @@ EOL
                     sudo apt update && sudo apt install python3 python3-venv python3-pip -y
                     python3 -m venv /tmp/mongo_test_env
                     source /tmp/mongo_test_env/bin/activate
-                     # Upgrade pip and install pymongo
+                     # Upgrade pip and install
                         python3 -m pip install --upgrade pip
                         python3 -m pip install pymongo
 

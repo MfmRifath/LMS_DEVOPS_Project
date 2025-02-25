@@ -34,46 +34,56 @@ pipeline {
         }
 
         stage('Test MongoDB Connection') {
-            steps {
-                sh '''
-                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
-                # Create a test script
-                cat > ~/test_mongodb.py << EOL
+    steps {
+        sh '''
+        # Create a temporary file with the MongoDB test script
+        cat > /tmp/test_mongodb.py << EOL
 import os
 from pymongo import MongoClient
 import sys
 
 uri = os.environ.get('MONGO_URI')
-print(f"Testing connection to MongoDB with URI: {uri[:20]}...")
+if not uri:
+    print("ERROR: MONGO_URI environment variable is not set")
+    sys.exit(1)
+
+# Mask all but the first few characters for security in logs
+masked_uri = uri[:20] + "..." if len(uri) > 20 else uri
+print(f"Testing connection to MongoDB with URI: {masked_uri}")
 
 try:
-                    # Create a connection using pymongo
-                    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-                    
-                    # Force a connection to verify
-                    client.admin.command('ping')
-                    
-                    print("MongoDB connection successful!")
-                    print("Available databases:")
-                    for db_name in client.list_database_names():
-                        print(f" - {db_name}")
-                        
+    # Create a connection using pymongo
+    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+    
+    # Force a connection to verify
+    client.admin.command('ping')
+    
+    print("MongoDB connection successful!")
+    print("Available databases:")
+    for db_name in client.list_database_names():
+        print(f" - {db_name}")
+        
 except Exception as e:
-                    print(f"MongoDB connection failed: {e}")
-                    sys.exit(1)
+    print(f"MongoDB connection failed: {e}")
+    sys.exit(1)
 EOL
 
-                # Install pymongo if needed
-                pip3 install pymongo
+        # Copy the script to the EC2 instance
+        scp -o StrictHostKeyChecking=no -i $SSH_KEY /tmp/test_mongodb.py $EC2_USER@$EC2_HOST:/tmp/
 
-                # Run the test with the MongoDB URI
-                export MONGO_URI='${MONGO_URI}'
-                python3 ~/test_mongodb.py
-EOF
-                '''
-            }
-        }
-
+        # Execute the script on the EC2 instance with the correct MongoDB URI
+        ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST "
+            # Install pymongo in a virtual environment
+            python3 -m venv /tmp/mongo_test_env
+            source /tmp/mongo_test_env/bin/activate
+            pip install pymongo
+            
+            # Run the test with the actual MongoDB URI
+            MONGO_URI='$MONGO_URI' python3 /tmp/test_mongodb.py
+        "
+        '''
+    }
+}
         stage('Update Dockerfile for Debugging') {
             steps {
                 sh '''

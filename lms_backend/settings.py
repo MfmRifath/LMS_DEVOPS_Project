@@ -25,7 +25,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: don't run with debug turned on in production!
 # The secret key
-SECRET_KEY = os.environ.get("SECRET_KEY")
+SECRET_KEY = '*&!bqh7cv(df8t3fe@tr72d4xj#^at*9zwy2a!2g+o1asj+rjq'
 DEBUG = bool(os.environ.get("DEBUG", default=0))
 
 # Option 1: Use environment variable with a default including your EC2 IP:
@@ -102,8 +102,12 @@ DATABASES = {
 }
 
 # MongoDB URI for mongoengine
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/lms_db")
-
+MONGO_URI = os.environ.get("MONGO_URI")
+if not MONGO_URI and not DEBUG:
+    raise ValueError("No MONGO_URI set in environment")
+elif not MONGO_URI and DEBUG:
+    # Default for local development only
+    MONGO_URI = "mongodb://localhost:27017/"
 # Password validation
 # https://docs.djangoproject.com/en/3.1/ref/settings/#auth-password-validators
 

@@ -109,7 +109,7 @@ DATABASES = {
 }
 
 # MongoDB URI for mongoengine
-MONGO_URI = os.environ.get("MONGO_URI")
+MONGO_URI = "mongodb+srv://rifath:3853532@cluster0.7n8xk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 if not MONGO_URI and not DEBUG:
     raise ValueError("No MONGO_URI set in environment")
 elif not MONGO_URI and DEBUG:

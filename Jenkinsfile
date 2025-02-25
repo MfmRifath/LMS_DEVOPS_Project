@@ -261,7 +261,7 @@ EOL'
 source ${APP_DIR}/.env
 
 # Set backup directory
-BACKUP_DIR="${APP_DIR}/backups"
+BACKUP_DIR="\${APP_DIR}/backups"
 mkdir -p \$BACKUP_DIR
 
 # Create backup with timestamp

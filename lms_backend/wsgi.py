@@ -8,9 +8,11 @@ https://docs.djangoproject.com/en/3.1/howto/deployment/wsgi/
 """
 
 import os
-
 from django.core.wsgi import get_wsgi_application
+from mongoengine import connect
+from django.conf import settings
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'lms_backend.settings')
+# Connect to MongoDB using mongoengine
+connect(host=settings.MONGO_URI)
 
 application = get_wsgi_application()

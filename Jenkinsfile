@@ -255,7 +255,7 @@ EOL'
                 sshagent(['deploy-key-id']) {
                     // Create a backup script
                     sh """
-                    ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > ${APP_DIR}/backup_mongodb.sh << EOL
+                    ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > \${APP_DIR}/backup_mongodb.sh << EOL
 #!/bin/bash
 # Load environment variables
 source \${APP_DIR}/.env
@@ -280,7 +280,7 @@ EOL'
                     
                     // Make the script executable
                     sh """
-                    ssh ${REMOTE_USER}@${REMOTE_HOST} 'chmod +x ${APP_DIR}/backup_mongodb.sh'
+                    ssh \${REMOTE_USER}@\${REMOTE_HOST} 'chmod +x \${APP_DIR}/backup_mongodb.sh'
                     """
                     
                     // Set up a daily cron job

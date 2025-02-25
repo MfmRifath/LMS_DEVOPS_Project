@@ -40,8 +40,10 @@ pipeline {
                 # Create a temporary file with the MongoDB test script
             
             echo "Creating virtual environment..."
-            pip install --upgrade pip
-            pip install pymongo
+            python3 -m venv /tmp/mongo_test_env
+            source /tmp/mongo_test_env/bin/activate
+            python3 -m pip install --upgrade pip
+            python3 -m pip install pymongo
 
                 cat > /tmp/test_mongodb.py << EOL
 import os

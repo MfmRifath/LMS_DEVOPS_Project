@@ -38,7 +38,6 @@ pipeline {
             steps {
                 sh '''
                 # Create a temporary file with the MongoDB test script
-                sudo apt update
             
             echo "Creating virtual environment..."
             pip install --upgrade pip

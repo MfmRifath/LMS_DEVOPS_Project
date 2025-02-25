@@ -1,5 +1,5 @@
 # Use the official Python runtime image
-FROM python:3.13  
+FROM python:3.12 
 
 # Set the working directory
 WORKDIR /app
@@ -10,7 +10,6 @@ ENV PYTHONUNBUFFERED=1
 
 # Upgrade pip, setuptools, and wheel
 RUN pip install --upgrade pip setuptools wheel  
-
 # Copy only requirements.txt first for better caching
 COPY requirements.txt /app/
 

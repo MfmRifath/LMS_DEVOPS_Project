@@ -244,15 +244,15 @@ EOL'
         stage('Setup MongoDB Backup') {
             steps {
                 sshagent(['deploy-key-id']) {
-                    // Create a backup script
+                    // Create a backup script with careful escaping for shell variables
                     sh """
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > ${APP_DIR}/backup_mongodb.sh << EOL
 #!/bin/bash
 # Load environment variables
-source ${APP_DIR}/.env
+source ${APP_DIR}${''}/.env
 
 # Set backup directory
-BACKUP_DIR="\${APP_DIR}/backups"
+BACKUP_DIR="${APP_DIR}${''}/backups"
 mkdir -p \$BACKUP_DIR
 
 # Create backup with timestamp
@@ -263,7 +263,7 @@ BACKUP_FILE="\$BACKUP_DIR/mongodb_\${TIMESTAMP}.gz"
 mongodump --uri="\$MONGO_URI" --gzip --archive="\$BACKUP_FILE"
 
 # Clean up old backups (keep only the last 7)
-ls -tp \$BACKUP_DIR/*.gz | grep -v '/$' | tail -n +8 | xargs -I {} rm -- {}
+ls -tp \$BACKUP_DIR/*.gz | grep -v '/\$' | tail -n +8 | xargs -I {} rm -- {}
 
 echo "Backup completed: \$BACKUP_FILE"
 EOL'

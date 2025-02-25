@@ -23,4 +23,4 @@ COPY . /app/
 EXPOSE 8000  
 
 # Run Django migrations, collect static files, and start the server using gunicorn
-CMD ["sh", "-c", "python manage.py migrate && python manage.py collectstatic --noinput && gunicorn --bind 0.0.0.0:8000 lms.wsgi:application"]
+CMD ["sh", "-c", "python3 manage.py migrate && python3 manage.py collectstatic --noinput && gunicorn --bind 0.0.0.0:8000 lms_backend.wsgi:application"]

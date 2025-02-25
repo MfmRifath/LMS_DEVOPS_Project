@@ -303,4 +303,6 @@ EOL'
             echo 'MongoDB setup failed!'
         }
     }
+    }
+    
 }

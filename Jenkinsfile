@@ -18,7 +18,7 @@ pipeline {
         REMOTE_HOST = "54.172.80.79"
         APP_DIR = "/var/www/lms_backend"
         DEPLOY_USER = "ec2-user"  // or ubuntu, depending on your EC2 instance 
-    }
+        }
 
     stages {
         stage('Clone Repository on Mac') {
@@ -90,6 +90,7 @@ EOF
                 '''
             }
         }
+
         stage('Wait for Application Startup') {
             steps {
                 sh '''
@@ -98,6 +99,7 @@ EOF
                 '''
             }
         }
+
         stage('Verify Deployment on EC2') {
             steps {
                 sh '''
@@ -107,6 +109,7 @@ EOF
                 '''
             }
         }
+
         stage('Diagnose Container') {
             steps {
                 sh '''
@@ -129,10 +132,13 @@ EOF
                 '''
             }
         }
-        stage('MongoDB Setup') {
+    
+    stage('MongoDB Setup') {
             steps {
                 // Check if we can connect to MongoDB
                 sh '''
+                # We're using a MongoDB Atlas cluster, so no local setup required
+                # Just verify connection using a simple Python script
                 python3 -c "
 import os
 from mongoengine import connect, ConnectionError
@@ -147,6 +153,7 @@ except Exception as e:
                 '''
             }
         }
+        
         stage('Deploy Application') {
             steps {
                 sshagent(['deploy-key-id']) {
@@ -204,6 +211,7 @@ EOL'
                 }
             }
         }
+        
         stage('Setup Nginx') {
             steps {
                 sshagent(['deploy-key-id']) {
@@ -241,10 +249,11 @@ EOL'
                 }
             }
         }
+        
         stage('Setup MongoDB Backup') {
             steps {
                 sshagent(['deploy-key-id']) {
-                    // Create a backup script with careful escaping for shell variables
+                    // Create a backup script
                     sh """
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > ${APP_DIR}/backup_mongodb.sh << EOL
 #!/bin/bash
@@ -252,7 +261,7 @@ EOL'
 source ${APP_DIR}${''}/.env
 
 # Set backup directory
-BACKUP_DIR="${APP_DIR}${''}/backups"
+BACKUP_DIR="\${APP_DIR}/backups"
 mkdir -p \$BACKUP_DIR
 
 # Create backup with timestamp
@@ -263,7 +272,7 @@ BACKUP_FILE="\$BACKUP_DIR/mongodb_\${TIMESTAMP}.gz"
 mongodump --uri="\$MONGO_URI" --gzip --archive="\$BACKUP_FILE"
 
 # Clean up old backups (keep only the last 7)
-ls -tp \$BACKUP_DIR/*.gz | grep -v '/\$' | tail -n +8 | xargs -I {} rm -- {}
+ls -tp \$BACKUP_DIR/*.gz | grep -v '/$' | tail -n +8 | xargs -I {} rm -- {}
 
 echo "Backup completed: \$BACKUP_FILE"
 EOL'
@@ -284,14 +293,15 @@ EOL'
         }
     }
 
+    
     post {
         success {
             echo "Pipeline executed successfully!"
-            echo "MongoDB setup completed successfully!"
+            echo 'MongoDB setup completed successfully!'
         }
         failure {
             echo "Pipeline failed. Check the logs for details."
-            echo "MongoDB setup failed!"
+            echo 'MongoDB setup failed!'
         }
     }
 }

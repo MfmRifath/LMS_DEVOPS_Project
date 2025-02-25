@@ -82,10 +82,12 @@ EOL
                 # Execute the script on the EC2 instance with the correct MongoDB URI
                 ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST "
                     # Create a virtual environment and install pymongo
-                    sudo apt update && sudo apt install python python-venv python-pip -y
-                    python -m venv /tmp/mongo_test_env
+                    sudo apt update && sudo apt install python3 python3-venv python3-pip -y
+                    python3 -m venv /tmp/mongo_test_env
                     source /tmp/mongo_test_env/bin/activate
-                    pip install pymongo
+                     # Upgrade pip and install pymongo
+                        python3 -m pip install --upgrade pip
+                        python3 -m pip install pymongo
 
                     # Run the test with the actual MongoDB URI
                     MONGO_URI='$MONGO_URI' python3 /tmp/test_mongodb.py

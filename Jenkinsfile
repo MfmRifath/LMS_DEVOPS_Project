@@ -6,17 +6,17 @@ pipeline {
         CONTAINER_NAME     = "lms_backend"
         DOCKER_PATH        = "/usr/local/bin/docker"  // Use the correct Docker path on Mac
         EC2_USER           = "ubuntu"
-        EC2_HOST           = "ec2-54-172-80-79.compute-1.amazonaws.com"
-        SSH_KEY            = "/var/lib/jenkins/.ssh/lms_django.pem"  // Update with your Mac's SSH key path
+        EC2_HOST           = "ec2-54-221-182-141.compute-1.amazonaws.com"
+        SSH_KEY            = "/var/lib/jenkins/.ssh/lms_backend.pem"  // Update with your Mac's SSH key path
         DOCKER_HUB_REPO    = "rifathmfm/lms_django"
         // Use the corrected MongoDB URI with the encoded "@" character in the password
         MONGO_URI          = "mongodb+srv://rifath:3853532@cluster0.7n8xk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
         SECRET_KEY         = credentials('django-secret-key')
-        DJANGO_ALLOWED_HOSTS = "54.172.80.79,your-domain.com"
+        DJANGO_ALLOWED_HOSTS = "54.221.182.141,your-domain.com"
         DEBUG              = "0"
         SSH_CREDS          = credentials('deploy-key-id')
         REMOTE_USER        = "ubuntu" // or ec2-user depending on your AMI
-        REMOTE_HOST        = "54.172.80.79"
+        REMOTE_HOST        = "54.221.182.141"
         APP_DIR            = "/var/www/lms_backend"
         DEPLOY_USER        = "ec2-user"  // or ubuntu, depending on your EC2 instance
     }

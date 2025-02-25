@@ -28,10 +28,10 @@ SECRET_KEY = '*&!bqh7cv(df8t3fe@tr72d4xj#^at*9zwy2a!2g+o1asj+rjq'
 DEBUG = bool(os.environ.get("DEBUG", default=0))
 
 # Option 1: Use environment variable with a default including your EC2 IP:
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,54.172.80.79").split(",")
+ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,54.221.182.141").split(",")
 
 # Option 2: Hard-code it (for testing):
-ALLOWED_HOSTS = ["54.172.80.79"]
+ALLOWED_HOSTS = ["54.221.182.141"]
 
 # Application definition
 
@@ -63,6 +63,14 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    # ... other middleware classes ...
+    
+    # Add the allauth middleware here, typically after the session middleware
+    'allauth.account.middleware.AccountMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+   
 ]
 MIDDLEWARE.insert(0, 'corsheaders.middleware.CorsMiddleware')
 ROOT_URLCONF = 'lms_backend.urls'

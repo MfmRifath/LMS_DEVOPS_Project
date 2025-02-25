@@ -40,7 +40,7 @@ pipeline {
                 # Create a temporary file with the MongoDB test script
             
             echo "Creating virtual environment..."
-            python -m venv /tmp/mongo_test_env
+            python3 -m venv /tmp/mongo_test_env
             source /tmp/mongo_test_env/bin/activate
             python -m pip install --upgrade pip
             python -m pip install pymongo

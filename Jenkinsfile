@@ -242,7 +242,7 @@ EOL'
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > ${APP_DIR}/backup_mongodb.sh << EOL
 #!/bin/bash
 # Load environment variables
-source ${APP_DIR}/.env
+source \${APP_DIR}/.env
 
 # Set backup directory
 BACKUP_DIR="\${APP_DIR}/backups"

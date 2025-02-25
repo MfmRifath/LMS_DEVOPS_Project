@@ -8,3 +8,4 @@ pillow==10.2.0  # If you handle images
 dj-rest-auth==2.1.1
 django-allauth==0.52.0
 mongoengine==0.27.0
+gunicorn==20.1.0

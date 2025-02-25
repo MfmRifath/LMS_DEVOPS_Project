@@ -2,22 +2,23 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "lms_django"
-        CONTAINER_NAME = "lms_backend"
-        DOCKER_PATH = "/usr/local/bin/docker"  // Use the correct Docker path on Mac
-        EC2_USER = "ubuntu"
-        EC2_HOST = "ec2-54-172-80-79.compute-1.amazonaws.com"
-        SSH_KEY = "/var/lib/jenkins/.ssh/lms_django.pem"  // Update with your Mac's SSH key path
-        DOCKER_HUB_REPO = "rifathmfm/lms_django" 
-        MONGO_URI = "mongodb+srv://mmfmrifath:3853532%40Rr@cluster0.7n8xk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-       SECRET_KEY = credentials('django-secret-key')
+        IMAGE_NAME         = "lms_django"
+        CONTAINER_NAME     = "lms_backend"
+        DOCKER_PATH        = "/usr/local/bin/docker"  // Use the correct Docker path on Mac
+        EC2_USER           = "ubuntu"
+        EC2_HOST           = "ec2-54-172-80-79.compute-1.amazonaws.com"
+        SSH_KEY            = "/var/lib/jenkins/.ssh/lms_django.pem"  // Update with your Mac's SSH key path
+        DOCKER_HUB_REPO    = "rifathmfm/lms_django"
+        // Use the corrected MongoDB URI with the encoded "@" character in the password
+        MONGO_URI          = "mongodb+srv://mmfmrifath:3853532%40Rr@cluster0.7n8xk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+        SECRET_KEY         = credentials('django-secret-key')
         DJANGO_ALLOWED_HOSTS = "54.172.80.79,your-domain.com"
-        DEBUG = "0"
-        SSH_CREDS = credentials('deploy-key-id')
-        REMOTE_USER = "ubuntu" // or ec2-user depending on your AMI
-        REMOTE_HOST = "54.172.80.79"
-        APP_DIR = "/var/www/lms_backend"
-        DEPLOY_USER = "ec2-user"  // or ubuntu, depending on your EC2 instance
+        DEBUG              = "0"
+        SSH_CREDS          = credentials('deploy-key-id')
+        REMOTE_USER        = "ubuntu" // or ec2-user depending on your AMI
+        REMOTE_HOST        = "54.172.80.79"
+        APP_DIR            = "/var/www/lms_backend"
+        DEPLOY_USER        = "ec2-user"  // or ubuntu, depending on your EC2 instance
     }
 
     stages {
@@ -34,10 +35,10 @@ pipeline {
         }
 
         stage('Test MongoDB Connection') {
-    steps {
-        sh '''
-        # Create a temporary file with the MongoDB test script
-        cat > /tmp/test_mongodb.py << EOL
+            steps {
+                sh '''
+                # Create a temporary file with the MongoDB test script
+                cat > /tmp/test_mongodb.py << EOL
 import os
 from pymongo import MongoClient
 import sys
@@ -68,22 +69,22 @@ except Exception as e:
     sys.exit(1)
 EOL
 
-        # Copy the script to the EC2 instance
-        scp -o StrictHostKeyChecking=no -i $SSH_KEY /tmp/test_mongodb.py $EC2_USER@$EC2_HOST:/tmp/
+                # Copy the script to the EC2 instance
+                scp -o StrictHostKeyChecking=no -i $SSH_KEY /tmp/test_mongodb.py $EC2_USER@$EC2_HOST:/tmp/
 
-        # Execute the script on the EC2 instance with the correct MongoDB URI
-        ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST "
-            # Install pymongo in a virtual environment
-            python3 -m venv /tmp/mongo_test_env
-            source /tmp/mongo_test_env/bin/activate
-            pip install pymongo
-            
-            # Run the test with the actual MongoDB URI
-            MONGO_URI='$MONGO_URI' python3 /tmp/test_mongodb.py
-        "
-        '''
-    }
-}
+                # Execute the script on the EC2 instance with the correct MongoDB URI
+                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST "
+                    # Create a virtual environment and install pymongo
+                    python3 -m venv /tmp/mongo_test_env
+                    source /tmp/mongo_test_env/bin/activate
+                    pip install pymongo
+
+                    # Run the test with the actual MongoDB URI
+                    MONGO_URI='$MONGO_URI' python3 /tmp/test_mongodb.py
+                "
+                '''
+            }
+        }
         stage('Update Dockerfile for Debugging') {
             steps {
                 sh '''

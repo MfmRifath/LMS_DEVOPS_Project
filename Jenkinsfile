@@ -84,7 +84,12 @@ pipeline {
                 docker rm $CONTAINER_NAME || true
 
                 echo "Running new container on EC2..."
-                docker run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME $DOCKER_HUB_REPO:latest
+                docker run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME \
+                -e MONGO_URI="$MONGO_URI" \
+                -e SECRET_KEY="$SECRET_KEY" \
+                -e DEBUG="$DEBUG" \
+                -e DJANGO_ALLOWED_HOSTS="$DJANGO_ALLOWED_HOSTS" \
+                $DOCKER_HUB_REPO:latest
 
                 echo "Deployment successful! Running containers:"
                 docker ps -a

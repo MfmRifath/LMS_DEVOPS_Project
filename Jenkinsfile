@@ -17,8 +17,8 @@ pipeline {
         REMOTE_USER = "ubuntu" // or ec2-user depending on your AMI
         REMOTE_HOST = "54.172.80.79"
         APP_DIR = "/var/www/lms_backend"
-        DEPLOY_USER = "ec2-user"  // or ubuntu, depending on your EC2 instance 
-        }
+        DEPLOY_USER = "ec2-user"  // or ubuntu, depending on your EC2 instance
+    }
 
     stages {
         stage('Clone Repository on Mac') {
@@ -32,6 +32,7 @@ pipeline {
                 '''
             }
         }
+
         stage('Build and Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-password', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
@@ -48,6 +49,7 @@ pipeline {
                 }
             }
         }
+
         stage('Deploy on EC2') {
             steps {
                 sh '''
@@ -55,7 +57,7 @@ pipeline {
                 # Define variables on the remote server
                 DOCKER_HUB_REPO="rifathmfm/lms_django"
                 CONTAINER_NAME="lms_backend"
-                
+                 
                 set -e  # Exit script on errors
                 set -x  # Enable debugging
 
@@ -132,10 +134,9 @@ EOF
                 '''
             }
         }
-    
-    stage('MongoDB Setup') {
+
+        stage('MongoDB Setup') {
             steps {
-                // Check if we can connect to MongoDB
                 sh '''
                 # We're using a MongoDB Atlas cluster, so no local setup required
                 # Just verify connection using a simple Python script
@@ -153,17 +154,12 @@ except Exception as e:
                 '''
             }
         }
-        
+
         stage('Deploy Application') {
             steps {
                 sshagent(['deploy-key-id']) {
-                    // Create app directory if it doesn't exist
                     sh "ssh ${REMOTE_USER}@${REMOTE_HOST} 'mkdir -p ${APP_DIR}'"
-                    
-                    // Transfer files
-                    sh "rsync -avz --exclude '.git' --exclude '*.pyc' --exclude 'venv' ./ ${REMOTE_USER}@${REMOTE_HOST}:${APP_DIR}/"
-                    
-                    // Setup environment
+                    sh "rsync -avz --exclude '.git' --exclude '*.pyc' --exclude 'venv' . ${REMOTE_USER}@${REMOTE_HOST}:${APP_DIR}/"
                     sh """
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > ${APP_DIR}/.env << EOL
 MONGO_URI=${MONGO_URI}
@@ -172,16 +168,12 @@ DEBUG=${DEBUG}
 DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
 EOL'
                     """
-                    
-                    // Setup virtual environment and dependencies
                     sh """
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'cd ${APP_DIR} && python3 -m venv venv && 
                     source venv/bin/activate && 
                     pip install -r requirements.txt && 
                     python manage.py collectstatic --noinput'
                     """
-                    
-                    // Setup Gunicorn service (if not already set up)
                     sh """
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'sudo cat > /etc/systemd/system/gunicorn.service << EOL
 [Unit]
@@ -201,8 +193,6 @@ EnvironmentFile=${APP_DIR}/.env
 WantedBy=multi-user.target
 EOL'
                     """
-                    
-                    // Reload services and restart
                     sh """
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'sudo systemctl daemon-reload && 
                     sudo systemctl restart gunicorn && 
@@ -211,16 +201,13 @@ EOL'
                 }
             }
         }
-        
+
         stage('Setup Nginx') {
             steps {
                 sshagent(['deploy-key-id']) {
-                    // Install Nginx if not present
                     sh """
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'sudo apt update && sudo apt install -y nginx'
                     """
-                    
-                    // Configure Nginx
                     sh """
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'sudo cat > /etc/nginx/sites-available/lms << EOL
 server {
@@ -239,8 +226,6 @@ server {
 }
 EOL'
                     """
-                    
-                    // Enable the site and restart Nginx
                     sh """
                     ssh ${REMOTE_USER}@${REMOTE_HOST} 'sudo ln -sf /etc/nginx/sites-available/lms /etc/nginx/sites-enabled/ && 
                     sudo nginx -t && 
@@ -249,16 +234,15 @@ EOL'
                 }
             }
         }
-        
+
         stage('Setup MongoDB Backup') {
-    steps {
-        sshagent(['deploy-key-id']) {
-            // Create a backup script
-            sh """
-            ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > \${APP_DIR}/backup_mongodb.sh << EOL
+            steps {
+                sshagent(['deploy-key-id']) {
+                    sh """
+                    ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > ${APP_DIR}/backup_mongodb.sh << EOL
 #!/bin/bash
 # Load environment variables
-source \${APP_DIR}/.env
+source ${APP_DIR}/.env
 
 # Set backup directory
 BACKUP_DIR="\${APP_DIR}/backups"
@@ -272,27 +256,23 @@ BACKUP_FILE="\$BACKUP_DIR/mongodb_\${TIMESTAMP}.gz"
 mongodump --uri="\$MONGO_URI" --gzip --archive="\$BACKUP_FILE"
 
 # Clean up old backups (keep only the last 7)
-ls -tp \$BACKUP_DIR/*.gz | grep -v '/\$' | tail -n +8 | xargs -I {} rm -- {}
+ls -tp \$BACKUP_DIR/*.gz | grep -v '/$' | tail -n +8 | xargs -I {} rm -- {}
 
 echo "Backup completed: \$BACKUP_FILE"
 EOL'
-"""
-
-            // Make the script executable
-            sh """
-            ssh ${REMOTE_USER}@${REMOTE_HOST} 'chmod +x \${APP_DIR}/backup_mongodb.sh'
-            """
-
-            // Set up a daily cron job
-            sh """
-            ssh ${REMOTE_USER}@${REMOTE_HOST} '(crontab -l 2>/dev/null || echo "") | grep -v "backup_mongodb.sh" | 
-            { cat; echo "0 2 * * * \${APP_DIR}/backup_mongodb.sh >> \${APP_DIR}/backup.log 2>&1"; } | crontab -'
-            """
+                    """
+                    sh """
+                    ssh \${REMOTE_USER}@\${REMOTE_HOST} 'chmod +x \${APP_DIR}/backup_mongodb.sh'
+                    """
+                    sh """
+                    ssh ${REMOTE_USER}@${REMOTE_HOST} '(crontab -l 2>/dev/null || echo "") | grep -v "backup_mongodb.sh" | 
+                    { cat; echo "0 2 * * * ${APP_DIR}/backup_mongodb.sh >> ${APP_DIR}/backup.log 2>&1"; } | crontab -'
+                    """
+                }
+            }
         }
     }
-}
 
-    
     post {
         success {
             echo "Pipeline executed successfully!"
@@ -303,6 +283,4 @@ EOL'
             echo 'MongoDB setup failed!'
         }
     }
-    }
-    
 }

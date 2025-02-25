@@ -9,8 +9,8 @@ pipeline {
         EC2_HOST = "ec2-54-172-80-79.compute-1.amazonaws.com"
         SSH_KEY = "/var/lib/jenkins/.ssh/lms_django.pem"  // Update with your Mac's SSH key path
         DOCKER_HUB_REPO = "rifathmfm/lms_django" 
-        MONGO_URI = credentials('mongodb-uri-credential')
-        SECRET_KEY = credentials('django-secret-key')
+        MONGO_URI = "mongodb+srv://mmfmrifath:3853532%40Rr@cluster0.7n8xk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+       SECRET_KEY = credentials('django-secret-key')
         DJANGO_ALLOWED_HOSTS = "54.172.80.79,your-domain.com"
         DEBUG = "0"
         SSH_CREDS = credentials('deploy-key-id')

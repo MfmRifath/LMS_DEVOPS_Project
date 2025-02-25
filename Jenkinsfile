@@ -231,8 +231,11 @@ EOF
             cd LMS_DEVOPS_Project && git pull origin main
         fi
 
-        # Create a virtual environment using the correct Python version
+        # Create a virtual environment using python3.12
         python3.12 -m venv venv
+
+        # Check for the existence of the python executable in the venv.
+        # Adjust the check to 'venv/bin/python3' instead of 'venv/bin/python3.12'
         if [ ! -f "venv/bin/python3" ]; then
             echo "Virtual environment creation failed!"
             exit 1
@@ -261,7 +264,6 @@ EOF
         '''
     }
 }
-
         stage('Verify Deployment on EC2') {
             steps {
                 sh '''

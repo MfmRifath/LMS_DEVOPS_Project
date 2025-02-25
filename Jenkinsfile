@@ -219,9 +219,9 @@ EOF
         mkdir -p ~/django_test
         cd ~/django_test
 
-        # Install python3-venv if not installed
+        # Install the appropriate venv package (using python3.12-venv here)
         sudo apt update
-        sudo apt install -y python3-venv
+        sudo apt install -y python3.12-venv
 
         # Clone the repository (or update if it already exists)
         if [ ! -d "./LMS_DEVOPS_Project" ]; then
@@ -231,8 +231,8 @@ EOF
             cd LMS_DEVOPS_Project && git pull origin main
         fi
 
-        # Create a virtual environment
-        python3 -m venv venv
+        # Create a virtual environment using the correct Python version
+        python3.12 -m venv venv
         if [ ! -f "venv/bin/python3" ]; then
             echo "Virtual environment creation failed!"
             exit 1

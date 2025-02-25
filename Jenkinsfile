@@ -38,6 +38,15 @@ pipeline {
             steps {
                 sh '''
                 # Create a temporary file with the MongoDB test script
+                sudo apt update
+            sudo apt install -y python3 python3-pip python3-venv  # Ensure Python, pip, and venv are installed
+
+            echo "Creating virtual environment..."
+            python3 -m venv /tmp/mongo_test_env
+            source /tmp/mongo_test_env/bin/activate
+            pip install --upgrade pip
+            pip install pymongo
+
                 cat > /tmp/test_mongodb.py << EOL
 import os
 from pymongo import MongoClient

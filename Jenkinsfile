@@ -33,6 +33,71 @@ pipeline {
             }
         }
 
+        stage('Test MongoDB Connection') {
+            steps {
+                sh '''
+                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
+                # Create a test script
+                cat > ~/test_mongodb.py << EOL
+import os
+from pymongo import MongoClient
+import sys
+
+uri = os.environ.get('MONGO_URI')
+print(f"Testing connection to MongoDB with URI: {uri[:20]}...")
+
+try:
+                    # Create a connection using pymongo
+                    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+                    
+                    # Force a connection to verify
+                    client.admin.command('ping')
+                    
+                    print("MongoDB connection successful!")
+                    print("Available databases:")
+                    for db_name in client.list_database_names():
+                        print(f" - {db_name}")
+                        
+except Exception as e:
+                    print(f"MongoDB connection failed: {e}")
+                    sys.exit(1)
+EOL
+
+                # Install pymongo if needed
+                pip3 install pymongo
+
+                # Run the test with the MongoDB URI
+                export MONGO_URI='${MONGO_URI}'
+                python3 ~/test_mongodb.py
+EOF
+                '''
+            }
+        }
+
+        stage('Update Dockerfile for Debugging') {
+            steps {
+                sh '''
+                cd $WORKSPACE/LMS_DEVOPS_Project
+                
+                # Check if the entrypoint script line already exists in the Dockerfile
+                if ! grep -q "entrypoint.sh" Dockerfile; then
+                    # Add debugging entrypoint before the CMD line
+                    sed -i '' '/CMD/i\\
+# Add a debugging startup script\\
+RUN echo '"'"'#!/bin/bash\\necho "=== ENVIRONMENT VARIABLES ===\\nenv\\necho "=== TESTING DJANGO SETTINGS ===\\npython manage.py check\\necho "=== STARTING APPLICATION ===\\nexec "$@"'"'"' > /app/entrypoint.sh && \\\\\\
+    chmod +x /app/entrypoint.sh\\
+\\
+# Use entrypoint script before the main command\\
+ENTRYPOINT ["/app/entrypoint.sh"]\\
+' Dockerfile
+                fi
+                
+                # Print the updated Dockerfile
+                cat Dockerfile
+                '''
+            }
+        }
+
         stage('Build and Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-password', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
@@ -87,8 +152,9 @@ pipeline {
                 docker run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME \
                 -e MONGO_URI="$MONGO_URI" \
                 -e SECRET_KEY="$SECRET_KEY" \
-                -e DEBUG="$DEBUG" \
+                -e DEBUG="1" \
                 -e DJANGO_ALLOWED_HOSTS="$DJANGO_ALLOWED_HOSTS" \
+                -e PYTHONUNBUFFERED="1" \
                 $DOCKER_HUB_REPO:latest
 
                 echo "Deployment successful! Running containers:"
@@ -107,6 +173,71 @@ EOF
             }
         }
 
+        stage('Diagnose Container') {
+            steps {
+                sh '''
+                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST '
+                echo "=== FULL CONTAINER LOGS ==="
+                docker logs lms_backend --tail 100
+                
+                echo "=== ENVIRONMENT VARIABLES IN CONTAINER ==="
+                docker exec lms_backend env || echo "Cannot execute command - container may have exited"
+                
+                echo "=== CONTAINER STATUS ==="
+                docker inspect -f "{{.State.Status}}" lms_backend
+                docker inspect -f "{{.State.ExitCode}}" lms_backend
+                
+                echo "=== CONTAINER NETWORKING ==="
+                docker inspect -f "{{.NetworkSettings.Ports}}" lms_backend
+                
+                echo "=== CHECKING CONTAINER FILE SYSTEM ==="
+                docker exec lms_backend ls -la /app || echo "Cannot access container file system"
+                
+                echo "=== CHECKING DJANGO SETTINGS ==="
+                docker exec lms_backend cat /app/lms_backend/settings.py || echo "Cannot access settings file"
+                '
+                '''
+            }
+        }
+
+        stage('Debug Django Setup') {
+            steps {
+                sh '''
+                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
+                # Create a test environment
+                mkdir -p ~/django_test
+                cd ~/django_test
+                
+                # Clone the repository
+                git clone https://github.com/MfmRifath/LMS_DEVOPS_Project.git .
+                
+                # Create a virtual environment
+                python3 -m venv venv
+                source venv/bin/activate
+                
+                # Install dependencies
+                pip install -r requirements.txt
+                
+                # Create a test environment file
+                cat > .env << EOL
+MONGO_URI='${MONGO_URI}'
+SECRET_KEY='${SECRET_KEY}'
+DEBUG='1'
+DJANGO_ALLOWED_HOSTS='localhost,127.0.0.1'
+EOL
+                
+                # Try to run a simple Django command to check settings
+                echo "=== TESTING DJANGO SETTINGS ==="
+                export MONGO_URI='${MONGO_URI}'
+                export SECRET_KEY='${SECRET_KEY}'
+                export DEBUG='1'
+                export DJANGO_ALLOWED_HOSTS='localhost,127.0.0.1'
+                python manage.py check --verbosity 2
+EOF
+                '''
+            }
+        }
+
         stage('Verify Deployment on EC2') {
             steps {
                 sh '''
@@ -117,29 +248,6 @@ EOF
             }
         }
 
-       
-        stage('Diagnose Container') {
-            steps {
-                sh '''
-                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST '
-                echo "Container logs:"
-                docker logs lms_backend
-
-                echo "Container status:"
-                docker inspect -f "{{.State.Status}}" lms_backend
-
-                echo "Network settings:"
-                docker inspect -f "{{.NetworkSettings.Ports}}" lms_backend
-
-                echo "Checking if anything is listening on port 8000 inside the container:"
-                docker exec lms_backend sh -c "apt-get update && apt-get install -y net-tools && netstat -tuln | grep 8000" || echo "Nothing listening on port 8000"
-
-                echo "Process list inside container:"
-                docker exec lms_backend ps aux
-                '
-                '''
-            }
-        }
         stage('MongoDB Setup') {
             steps {
                 sh '''
@@ -239,12 +347,13 @@ EOL'
                 }
             }
         }
-stage('Setup MongoDB Backup') {
-    steps {
-        sshagent(['deploy-key-id']) {
-            // Create a backup script
-            sh """
-            ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > \${APP_DIR}/backup_mongodb.sh << EOL
+        
+        stage('Setup MongoDB Backup') {
+            steps {
+                sshagent(['deploy-key-id']) {
+                    // Create a backup script
+                    sh """
+                    ssh ${REMOTE_USER}@${REMOTE_HOST} 'cat > \${APP_DIR}/backup_mongodb.sh << EOL
 #!/bin/bash
 # Load environment variables
 source \${APP_DIR}/.env
@@ -267,19 +376,19 @@ echo "Backup completed: \$BACKUP_FILE"
 EOL'
 """
 
-            // Make the script executable
-            sh """
-            ssh ${REMOTE_USER}@${REMOTE_HOST} 'chmod +x \${APP_DIR}/backup_mongodb.sh'
-            """
+                    // Make the script executable
+                    sh """
+                    ssh ${REMOTE_USER}@${REMOTE_HOST} 'chmod +x \${APP_DIR}/backup_mongodb.sh'
+                    """
 
-            // Set up a daily cron job
-            sh """
-            ssh ${REMOTE_USER}@${REMOTE_HOST} '(crontab -l 2>/dev/null || echo "") | grep -v "backup_mongodb.sh" | 
-            { cat; echo "0 2 * * * \${APP_DIR}/backup_mongodb.sh >> \${APP_DIR}/backup.log 2>&1"; } | crontab -'
-            """
+                    // Set up a daily cron job
+                    sh """
+                    ssh ${REMOTE_USER}@${REMOTE_HOST} '(crontab -l 2>/dev/null || echo "") | grep -v "backup_mongodb.sh" | 
+                    { cat; echo "0 2 * * * \${APP_DIR}/backup_mongodb.sh >> \${APP_DIR}/backup.log 2>&1"; } | crontab -'
+                    """
+                }
+            }
         }
-    }
-}
     }
 
     post {

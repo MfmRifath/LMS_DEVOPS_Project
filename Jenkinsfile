@@ -1,11 +1,5 @@
 pipeline {
     agent any
-    
-    // Add this options section for workspace cleaning
-    options {
-        // Clean workspace before every build
-        cleanWs()
-    }
 
     environment {
         // Application settings
@@ -39,10 +33,18 @@ pipeline {
     }
 
     stages {
+        // Add a cleanup stage instead of using cleanWs() option
+        stage('Cleanup Workspace') {
+            steps {
+                // Clean workspace manually
+                sh 'rm -rf $WORKSPACE/*'
+            }
+        }
+        
         stage('Clone Repository') {
             steps {
                 sh '''
-                # Fresh clone since workspace was cleaned
+                # Fresh clone after manual cleanup
                 git clone https://github.com/MfmRifath/LMS_DEVOPS_Project.git $WORKSPACE/LMS_DEVOPS_Project
                 '''
             }
@@ -583,11 +585,8 @@ EOF
                         rm -rf /tmp/mongo_test_env || true
                         '''
                         
-                        cleanWs(cleanWhenNotBuilt: false,
-                                deleteDirs: true,
-                                disableDeferredWipeout: true,
-                                notFailBuild: true,
-                                patterns: [[pattern: 'venv', type: 'INCLUDE']])
+                        // Manual cleanup instead of cleanWs
+                        sh 'find $WORKSPACE -name "venv" -type d -exec rm -rf {} + || true'
                     } catch (Exception e) {
                         echo "Workspace cleanup failed: ${e.message}"
                     }

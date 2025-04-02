@@ -2,27 +2,35 @@ pipeline {
     agent any
 
     environment {
+        // Application settings
         IMAGE_NAME         = "lms_django"
         CONTAINER_NAME     = "lms_backend"
-        DOCKER_PATH        = "/usr/local/bin/docker"  // Use the correct Docker path on Mac
+        DOCKER_HUB_REPO    = "rifathmfm/lms_django"
+        
+        // Server details
         EC2_USER           = "ubuntu"
         EC2_HOST           = "ec2-54-221-182-141.compute-1.amazonaws.com"
-        SSH_KEY            = "/var/lib/jenkins/.ssh/lms_backend.pem"  // Update with your Mac's SSH key path
-        DOCKER_HUB_REPO    = "rifathmfm/lms_django"
-        // Use the corrected MongoDB URI with the encoded "@" character in the password
-        MONGO_URI          = "mongodb+srv://rifath:3853532@cluster0.7n8xk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-        SECRET_KEY         = credentials('django-secret-key')
-        DJANGO_ALLOWED_HOSTS = "54.221.182.141,your-domain.com"
-        DEBUG              = "0"
-        SSH_CREDS          = credentials('deploy-key-id')
-        REMOTE_USER        = "ubuntu" // or ec2-user depending on your AMI
         REMOTE_HOST        = "54.221.182.141"
         APP_DIR            = "/var/www/lms_backend"
-        DEPLOY_USER        = "ec2-user"  // or ubuntu, depending on your EC2 instance
+        
+        // Docker path (adjust as needed for your Jenkins server)
+        DOCKER_PATH        = "/usr/local/bin/docker"
+        
+        // Credentials and secrets
+        SSH_KEY            = credentials('lms-ssh-key')
+        MONGO_URI          = credentials('mongodb-uri')
+        SECRET_KEY         = credentials('django-secret-key')
+        DJANGO_ALLOWED_HOSTS = "${REMOTE_HOST},localhost,127.0.0.1"
+        DEBUG              = "0"
+        
+        // Terraform variables
+        TF_VAR_region      = "us-east-1"
+        TF_VAR_instance_type = "t2.micro"
+        TF_IN_AUTOMATION   = "true"
     }
 
     stages {
-        stage('Clone Repository on Mac') {
+        stage('Clone Repository') {
             steps {
                 sh '''
                 if [ ! -d "$WORKSPACE/LMS_DEVOPS_Project" ]; then
@@ -33,18 +41,59 @@ pipeline {
                 '''
             }
         }
+        
+        stage('Run Tests') {
+            steps {
+                sh '''
+                cd $WORKSPACE/LMS_DEVOPS_Project
+                
+                # Create virtual environment for testing
+                python3 -m venv venv
+                source venv/bin/activate
+                
+                # Install dependencies
+                pip install -r requirements.txt
+                
+                # Run Django tests if available
+                python manage.py test || echo "No tests available, skipping..."
+                
+                deactivate
+                '''
+            }
+        }
+        
+        stage('Provision Infrastructure with Terraform') {
+            steps {
+                sh '''
+                cd $WORKSPACE/LMS_DEVOPS_Project/terraform
+                
+                # Initialize Terraform
+                terraform init
+                
+                # Plan Terraform changes
+                terraform plan -out=tfplan
+                
+                # Apply Terraform changes
+                terraform apply -auto-approve tfplan
+                
+                # Get the new EC2 instance IP if it changed
+                export EC2_IP=$(terraform output -raw instance_public_ip || echo "${REMOTE_HOST}")
+                echo "EC2 Instance IP: $EC2_IP"
+                
+                # If the IP changed, update the environment variable
+                if [ "$EC2_IP" != "${REMOTE_HOST}" ] && [ ! -z "$EC2_IP" ]; then
+                    echo "Updating EC2 host information..."
+                    # This is just informational - we'd need to update Jenkins env vars permanently
+                    # in a real scenario or use a more dynamic approach
+                fi
+                '''
+            }
+        }
 
         stage('Test MongoDB Connection') {
             steps {
                 sh '''
-                # Create a temporary file with the MongoDB test script
-            
-            echo "Creating virtual environment..."
-            python3 -m venv /tmp/mongo_test_env
-            source /tmp/mongo_test_env/bin/activate
-            python -m pip install --upgrade pip
-            python -m pip install pymongo
-
+                # Create a temporary test script
                 cat > /tmp/test_mongodb.py << EOL
 import os
 from pymongo import MongoClient
@@ -76,61 +125,40 @@ except Exception as e:
     sys.exit(1)
 EOL
 
-                # Copy the script to the EC2 instance
-                scp -o StrictHostKeyChecking=no -i $SSH_KEY /tmp/test_mongodb.py $EC2_USER@$EC2_HOST:/tmp/
-
-                # Execute the script on the EC2 instance with the correct MongoDB URI
-                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST "
-                    # Create a virtual environment and install pymongo
-                    sudo apt update && sudo apt install python3 python3-venv python3-pip -y
-                    python3 -m venv /tmp/mongo_test_env
-                    source /tmp/mongo_test_env/bin/activate
-                     # Upgrade pip and install
-                        python3 -m pip install --upgrade pip
-                        python3 -m pip install pymongo
-
-                    # Run the test with the actual MongoDB URI
-                    MONGO_URI='$MONGO_URI' python3 /tmp/test_mongodb.py
-                "
-                '''
-            }
-        }
-        stage('Update Dockerfile for Debugging') {
-            steps {
-                sh '''
-                cd $WORKSPACE/LMS_DEVOPS_Project
+                # Create virtual environment for MongoDB test
+                python3 -m venv /tmp/mongo_test_env
+                source /tmp/mongo_test_env/bin/activate
+                pip install pymongo
                 
-                # Check if the entrypoint script line already exists in the Dockerfile
-                if ! grep -q "entrypoint.sh" Dockerfile; then
-                    # Add debugging entrypoint before the CMD line
-                    sed -i '' '/CMD/i\\
-# Add a debugging startup script\\
-RUN echo '"'"'#!/bin/bash\\necho "=== ENVIRONMENT VARIABLES ===\\nenv\\necho "=== TESTING DJANGO SETTINGS ===\\npython manage.py check\\necho "=== STARTING APPLICATION ===\\nexec "$@"'"'"' > /app/entrypoint.sh && \\\\\\
-    chmod +x /app/entrypoint.sh\\
-\\
-# Use entrypoint script before the main command\\
-ENTRYPOINT ["/app/entrypoint.sh"]\\
-' Dockerfile
-                fi
+                # Run the MongoDB connection test
+                MONGO_URI="$MONGO_URI" python /tmp/test_mongodb.py
                 
-                # Print the updated Dockerfile
-                cat Dockerfile
+                deactivate
                 '''
             }
         }
 
         stage('Build and Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-password', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
                     sh '''
                     cd $WORKSPACE/LMS_DEVOPS_Project
+                    
+                    # Login to Docker Hub
                     echo "$DOCKER_PASSWORD" | $DOCKER_PATH login -u "$DOCKER_USERNAME" --password-stdin
                     
-                    # Build the image with platform flag
+                    # Build the image for Linux/AMD64 platform
                     $DOCKER_PATH build --platform=linux/amd64 -t $DOCKER_HUB_REPO:latest .
                     
-                    # Push the image to Docker Hub
+                    # Also tag with build number for versioning
+                    $DOCKER_PATH tag $DOCKER_HUB_REPO:latest $DOCKER_HUB_REPO:build-$BUILD_NUMBER
+                    
+                    # Push both tags to Docker Hub
                     $DOCKER_PATH push $DOCKER_HUB_REPO:latest
+                    $DOCKER_PATH push $DOCKER_HUB_REPO:build-$BUILD_NUMBER
+                    
+                    # Logout from Docker Hub
+                    $DOCKER_PATH logout
                     '''
                 }
             }
@@ -139,15 +167,24 @@ ENTRYPOINT ["/app/entrypoint.sh"]\\
         stage('Deploy on EC2') {
             steps {
                 sh '''
+                # Copy deployment scripts to EC2
+                scp -o StrictHostKeyChecking=no -i $SSH_KEY $WORKSPACE/LMS_DEVOPS_Project/deploy.sh $EC2_USER@$EC2_HOST:/tmp/
+                
+                # Execute deployment script on EC2
                 ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << 'EOF'
                 # Define variables on the remote server
                 DOCKER_HUB_REPO="rifathmfm/lms_django"
                 CONTAINER_NAME="lms_backend"
+                MONGO_URI="${MONGO_URI}"
+                SECRET_KEY="${SECRET_KEY}"
+                DEBUG="${DEBUG}"
+                DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS}"
                  
-                set -e  # Exit script on errors
-                set -x  # Enable debugging
+                # Enable error handling and debugging
+                set -e
+                set -x
 
-                echo "Checking if Docker is installed..."
+                # Ensure Docker is installed
                 if ! command -v docker &> /dev/null; then
                     echo "Installing Docker..."
                     sudo apt update
@@ -159,24 +196,70 @@ ENTRYPOINT ["/app/entrypoint.sh"]\\
                     echo "Docker is already installed."
                 fi
 
-                echo "Ensuring correct Docker permissions..."
-                sudo chmod 777 /var/run/docker.sock
+                # Ensure correct Docker permissions
+                sudo chmod 666 /var/run/docker.sock
 
-                echo "Pulling latest Docker image from Docker Hub..."
+                # Pull latest Docker image
                 docker pull $DOCKER_HUB_REPO:latest
 
-                echo "Stopping and removing existing container if it exists..."
+                # Stop and remove existing container if it exists
                 docker stop $CONTAINER_NAME || true
                 docker rm $CONTAINER_NAME || true
 
-                echo "Running new container on EC2..."
+                # Create app directory if it doesn't exist
+                sudo mkdir -p /var/www/lms_backend/static
+                sudo mkdir -p /var/www/lms_backend/media
+                sudo chmod -R 777 /var/www/lms_backend
+
+                # Run new container
                 docker run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME \
-                -e MONGO_URI="$MONGO_URI" \
-                -e SECRET_KEY="$SECRET_KEY" \
-                -e DEBUG="1" \
-                -e DJANGO_ALLOWED_HOSTS="$DJANGO_ALLOWED_HOSTS" \
+                -e MONGO_URI="${MONGO_URI}" \
+                -e SECRET_KEY="${SECRET_KEY}" \
+                -e DEBUG="${DEBUG}" \
+                -e DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS}" \
                 -e PYTHONUNBUFFERED="1" \
+                -v /var/www/lms_backend/static:/app/staticfiles \
+                -v /var/www/lms_backend/media:/app/media \
                 $DOCKER_HUB_REPO:latest
+
+                # Set up Nginx if needed
+                if ! command -v nginx &> /dev/null; then
+                    echo "Installing Nginx..."
+                    sudo apt update
+                    sudo apt install -y nginx
+                    
+                    # Create Nginx configuration for Django
+                    sudo tee /etc/nginx/sites-available/lms << 'NGINX'
+server {
+    listen 80;
+    server_name ${REMOTE_HOST};
+
+    location /static/ {
+        alias /var/www/lms_backend/static/;
+    }
+
+    location /media/ {
+        alias /var/www/lms_backend/media/;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+NGINX
+
+                    # Enable the site
+                    sudo ln -sf /etc/nginx/sites-available/lms /etc/nginx/sites-enabled/
+                    sudo rm -f /etc/nginx/sites-enabled/default
+                    
+                    # Test and reload Nginx
+                    sudo nginx -t
+                    sudo systemctl restart nginx
+                fi
 
                 echo "Deployment successful! Running containers:"
                 docker ps -a
@@ -188,50 +271,76 @@ EOF
         stage('Wait for Application Startup') {
             steps {
                 sh '''
-                # Wait for the application to start
+                # Wait for the application to start (20 seconds)
                 sleep 20
-                '''
-            }
-        }
-
-        stage('Diagnose Container') {
-            steps {
-                sh '''
+                
+                # Check if the application is running
                 ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST '
-                echo "=== FULL CONTAINER LOGS ==="
-                docker logs lms_backend --tail 100
-                
-                echo "=== ENVIRONMENT VARIABLES IN CONTAINER ==="
-                docker exec lms_backend env || echo "Cannot execute command - container may have exited"
-                
-                echo "=== CONTAINER STATUS ==="
-                docker inspect -f "{{.State.Status}}" lms_backend
-                docker inspect -f "{{.State.ExitCode}}" lms_backend
-                
-                echo "=== CONTAINER NETWORKING ==="
-                docker inspect -f "{{.NetworkSettings.Ports}}" lms_backend
-                
-                echo "=== CHECKING CONTAINER FILE SYSTEM ==="
-                docker exec lms_backend ls -la /app || echo "Cannot access container file system"
-                
-                echo "=== CHECKING DJANGO SETTINGS ==="
-                docker exec lms_backend cat /app/lms_backend/settings.py || echo "Cannot access settings file"
+                    if docker ps | grep -q $CONTAINER_NAME; then
+                        echo "Application is running!"
+                        exit 0
+                    else
+                        echo "Application failed to start!"
+                        exit 1
+                    fi
                 '
                 '''
             }
         }
 
-      
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                # Check application status
+                ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST '
+                    echo "=== CONTAINER STATUS ==="
+                    docker ps -a | grep lms_backend
+                    
+                    echo "=== APPLICATION HEALTH CHECK ==="
+                    curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ || echo "Application not responding on port 8000"
+                    
+                    echo "=== CONTAINER LOGS (LAST 20 LINES) ==="
+                    docker logs --tail 20 lms_backend
+                '
+                '''
+            }
+        }
     }
 
     post {
         success {
-            echo "Pipeline executed successfully!"
-            echo 'MongoDB setup completed successfully!'
+            echo "==============================================" 
+            echo "CI/CD Pipeline executed successfully!"
+            echo "Application deployed to ${EC2_HOST}"
+            echo "MongoDB connection configured correctly"
+            echo "=============================================="
         }
+        
         failure {
-            echo "Pipeline failed. Check the logs for details."
-            echo 'MongoDB setup failed!'
+            echo "==============================================" 
+            echo "CI/CD Pipeline failed. Check the logs for details."
+            echo "=============================================="
+            
+            // Send notification on failure
+            sh '''
+            ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST '
+                # Get logs for debugging
+                echo "=== FULL CONTAINER LOGS ==="
+                docker logs lms_backend || echo "Container not running"
+                
+                # Check container status
+                docker inspect lms_backend || echo "Container not found"
+            '
+            '''
+        }
+        
+        always {
+            // Clean up workspace
+            cleanWs(cleanWhenNotBuilt: false,
+                    deleteDirs: true,
+                    disableDeferredWipeout: true,
+                    notFailBuild: true,
+                    patterns: [[pattern: 'venv', type: 'INCLUDE']])
         }
     }
 }

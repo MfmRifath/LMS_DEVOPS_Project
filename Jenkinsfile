@@ -7,17 +7,14 @@ pipeline {
         CONTAINER_NAME     = "lms_backend"
         DOCKER_HUB_REPO    = "rifathmfm/lms_django"
         
-        // Server details - these will be potentially updated during the pipeline
+        // Server details - these will be updated during the pipeline
         EC2_USER           = "ubuntu"
-        EC2_HOST           = "ec2-54-221-182-141.compute-1.amazonaws.com"
-        REMOTE_HOST        = "54.221.182.141"
         APP_DIR            = "/var/www/lms_backend"
         
         // Docker path (adjust as needed for your Jenkins server)
         DOCKER_PATH        = "/usr/local/bin/docker"
         
         // Credentials and secrets
-        DJANGO_ALLOWED_HOSTS = "${REMOTE_HOST},localhost,127.0.0.1"
         DEBUG              = "0"
         
         // Flag for EC2 availability (initialized to false)
@@ -392,6 +389,10 @@ EOL
                     echo "Contents of ec2_info.txt:"
                     cat ec2_info.txt
                     
+                    # Export vars for Jenkins
+                    echo "export EC2_PUBLIC_IP=$PUBLIC_IP" > ec2_env.sh
+                    echo "export EC2_PUBLIC_DNS=$PUBLIC_DNS" >> ec2_env.sh
+                    
                     # Clean up credentials for security
                     rm -f ~/.aws/credentials
                     
@@ -411,13 +412,25 @@ EOL
                             
                             echo "Extracted values - publicIp: '${publicIp}', publicDns: '${publicDns}'"
                             
+                            // Set environment variables directly at the Jenkins level
                             if (publicIp && publicDns) {
-                                env.REMOTE_HOST = publicIp
-                                env.EC2_HOST = publicDns
-                                env.DJANGO_ALLOWED_HOSTS = "${publicIp},${publicDns},localhost,127.0.0.1"
                                 env.EC2_AVAILABLE = "true"
                                 
-                                echo "Updated EC2 details:"
+                                // Create a properties file for environment variables
+                                writeFile file: "${WORKSPACE}/ec2_props.txt", text: """
+                                EC2_AVAILABLE=true
+                                REMOTE_HOST=${publicIp}
+                                EC2_HOST=${publicDns}
+                                DJANGO_ALLOWED_HOSTS=${publicIp},${publicDns},localhost,127.0.0.1
+                                """
+                                
+                                // Load the properties file into environment variables
+                                def props = readProperties file: "${WORKSPACE}/ec2_props.txt"
+                                env.REMOTE_HOST = props.REMOTE_HOST
+                                env.EC2_HOST = props.EC2_HOST
+                                env.DJANGO_ALLOWED_HOSTS = props.DJANGO_ALLOWED_HOSTS
+                                
+                                echo "Updated EC2 details (CRITICAL CHECK):"
                                 echo "EC2_AVAILABLE=${env.EC2_AVAILABLE}"
                                 echo "REMOTE_HOST=${env.REMOTE_HOST}"
                                 echo "EC2_HOST=${env.EC2_HOST}"
@@ -440,16 +453,23 @@ EOL
 
         stage('Check EC2 Connectivity') {
             when {
-                expression { return env.EC2_AVAILABLE == 'true' }
+                expression { 
+                    echo "Check connectivity - EC2_AVAILABLE=${env.EC2_AVAILABLE}"
+                    return env.EC2_AVAILABLE == 'true' 
+                }
             }
             steps {
                 script {
-                    echo "Attempting to connect to EC2 at ${env.EC2_HOST}"
+                    echo "Attempting to connect to EC2 at ${env.EC2_HOST} (${env.REMOTE_HOST})"
                     try {
                         withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
                             sh '''
+                            # Print diagnostic info
+                            echo "Connecting to: $EC2_USER@$EC2_HOST"
+                            echo "Using key: $SSH_KEY"
+                            
                             # Test SSH connection with increased timeout
-                            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i $SSH_KEY $EC2_USER@$EC2_HOST "echo EC2 connection successful"
+                            ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i $SSH_KEY $EC2_USER@$EC2_HOST "echo EC2 connection successful"
                             '''
                         }
                         echo "EC2 connection successful"
@@ -471,7 +491,10 @@ EOL
 
         stage('Deploy on EC2') {
             when {
-                expression { return env.EC2_AVAILABLE == 'true' }
+                expression {
+                    echo "Deploy - EC2_AVAILABLE=${env.EC2_AVAILABLE}"
+                    return env.EC2_AVAILABLE == 'true'
+                }
             }
             steps {
                 withCredentials([

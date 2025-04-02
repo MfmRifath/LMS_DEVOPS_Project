@@ -267,7 +267,7 @@ EOL
             }
         }
 
-        stage('Get EC2 Instance Info') {
+        stage('Check and Create EC2 Instance') {
             steps {
                 withCredentials([
                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
@@ -312,30 +312,86 @@ EOL
                       --output text)
                       
                     if [ -z "$INSTANCE_ID" ]; then
-                        echo "No instance found with tag Name=${EC2_NAME_TAG}"
-                        echo "EC2_STATUS=unavailable" > $WORKSPACE/ec2_info.sh
-                        exit 0
+                        echo "No instance found with tag Name=${EC2_NAME_TAG}, creating a new one..."
+                        
+                        # Check if the security group exists
+                        echo "Checking if security group exists..."
+                        SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=${EC2_SG_NAME}" --query "SecurityGroups[0].GroupId" --output text)
+                        
+                        if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+                            echo "Creating security group: ${EC2_SG_NAME}"
+                            SG_ID=$(aws ec2 create-security-group --group-name ${EC2_SG_NAME} --description "Security group for LMS backend" --query "GroupId" --output text)
+                            
+                            # Add necessary inbound rules
+                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
+                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 8000 --cidr 0.0.0.0/0
+                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0
+                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 443 --cidr 0.0.0.0/0
+                        fi
+                        
+                        # Check if key pair exists
+                        echo "Checking if key pair exists..."
+                        if ! aws ec2 describe-key-pairs --key-names ${EC2_KEY_NAME} &>/dev/null; then
+                            echo "ERROR: The key pair ${EC2_KEY_NAME} does not exist."
+                            echo "Please create it manually and add it to Jenkins credentials before continuing."
+                            exit 1
+                        fi
+                        
+                        # Create EC2 instance
+                        echo "Creating EC2 instance..."
+                        INSTANCE_ID=$(aws ec2 run-instances \
+                            --image-id ${EC2_IMAGE_ID} \
+                            --instance-type ${EC2_INSTANCE_TYPE} \
+                            --key-name ${EC2_KEY_NAME} \
+                            --security-group-ids $SG_ID \
+                            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${EC2_NAME_TAG}}]" \
+                            --query "Instances[0].InstanceId" \
+                            --output text)
+                        
+                        echo "Waiting for instance to be running..."
+                        aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+                        
+                        # Give the instance a bit more time to initialize
+                        echo "Instance is running. Waiting 60 more seconds for full initialization..."
+                        sleep 60
                     else
                         echo "Found existing instance with ID: $INSTANCE_ID"
                         
-                        # Get instance details
-                        echo "Getting instance details..."
-                        PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
-                        PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicDnsName" --output text)
-                        
-                        echo "Instance information:"
-                        echo "INSTANCE_ID=$INSTANCE_ID"
-                        echo "PUBLIC_IP=$PUBLIC_IP"
-                        echo "PUBLIC_DNS=$PUBLIC_DNS"
-                        
-                        # Create a shell script with environment variables for EC2 details
-                        cat > $WORKSPACE/ec2_info.sh << EOL
+                        # Check if instance is stopped, start it if needed
+                        INSTANCE_STATE=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID \
+                            --query "Reservations[0].Instances[0].State.Name" --output text)
+                            
+                        if [ "$INSTANCE_STATE" = "stopped" ]; then
+                            echo "Instance is stopped. Starting it..."
+                            aws ec2 start-instances --instance-ids $INSTANCE_ID
+                            aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+                            echo "Instance started successfully"
+                            
+                            # Give the instance a bit more time to initialize
+                            echo "Waiting 60 more seconds for full initialization..."
+                            sleep 60
+                        fi
+                    fi
+                    
+                    # Get instance details (works for both new and existing instances)
+                    echo "Getting instance details..."
+                    PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID \
+                        --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+                    PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID \
+                        --query "Reservations[0].Instances[0].PublicDnsName" --output text)
+                    
+                    echo "Instance information:"
+                    echo "INSTANCE_ID=$INSTANCE_ID"
+                    echo "PUBLIC_IP=$PUBLIC_IP"
+                    echo "PUBLIC_DNS=$PUBLIC_DNS"
+                    
+                    # Create a shell script with environment variables for EC2 details
+                    cat > $WORKSPACE/ec2_info.sh << EOL
 EC2_STATUS=available
 EC2_IP=$PUBLIC_IP
 EC2_DNS=$PUBLIC_DNS
 EC2_ALLOWED_HOSTS=$PUBLIC_IP,$PUBLIC_DNS,localhost,127.0.0.1
 EOL
-                    fi
                     
                     # Clean up credentials for security
                     rm -f ~/.aws/credentials
@@ -372,15 +428,27 @@ SSH_KEY=\$1
 EC2_USER=\$2
 EC2_DNS=\$3
 
-# Test SSH connection
-echo "Testing SSH connection to \$EC2_USER@\$EC2_DNS"
-if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i \$SSH_KEY \$EC2_USER@\$EC2_DNS "echo SSH_CONNECTION_SUCCESSFUL"; then
-    echo "SSH connection successful"
-    echo "EC2_SSH=successful" > $WORKSPACE/ssh_status.sh
-else
-    echo "SSH connection failed"
-    echo "EC2_SSH=failed" > $WORKSPACE/ssh_status.sh
-fi
+# Test SSH connection with retries (max 10 attempts, 15 seconds between attempts)
+MAX_ATTEMPTS=10
+ATTEMPT=1
+
+while [ \$ATTEMPT -le \$MAX_ATTEMPTS ]; do
+    echo "SSH connection attempt \$ATTEMPT of \$MAX_ATTEMPTS..."
+    
+    if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i \$SSH_KEY \$EC2_USER@\$EC2_DNS "echo SSH_CONNECTION_SUCCESSFUL"; then
+        echo "SSH connection successful"
+        echo "EC2_SSH=successful" > $WORKSPACE/ssh_status.sh
+        exit 0
+    else
+        echo "SSH connection attempt \$ATTEMPT failed, waiting 15 seconds before retry..."
+        sleep 15
+        ATTEMPT=\$((ATTEMPT+1))
+    fi
+done
+
+echo "All SSH connection attempts failed after \$MAX_ATTEMPTS tries"
+echo "EC2_SSH=failed" > $WORKSPACE/ssh_status.sh
+exit 1
 EOL
 
                 # Make the script executable
@@ -406,6 +474,12 @@ EOL
                     
                     # Test SSH connection
                     $WORKSPACE/test_ssh.sh "$SSH_KEY" "$EC2_USER" "$EC2_DNS"
+                    
+                    # Create a default ssh_status.sh if the file doesn't exist
+                    if [ ! -f "$WORKSPACE/ssh_status.sh" ]; then
+                        echo "ssh_status.sh file not found, creating default"
+                        echo "EC2_SSH=failed" > $WORKSPACE/ssh_status.sh
+                    fi
                     '''
                 }
             }
@@ -414,9 +488,14 @@ EOL
         stage('Deploy to EC2') {
             steps {
                 sh '''
+                # Create default ssh_status.sh if it doesn't exist to prevent failures
+                if [ ! -f "$WORKSPACE/ssh_status.sh" ]; then
+                    echo "EC2_SSH=failed" > $WORKSPACE/ssh_status.sh
+                fi
+                
                 # Check if EC2 and SSH info exist
-                if [ ! -f "$WORKSPACE/ec2_info.sh" ] || [ ! -f "$WORKSPACE/ssh_status.sh" ]; then
-                    echo "EC2 or SSH information not found, skipping deployment"
+                if [ ! -f "$WORKSPACE/ec2_info.sh" ]; then
+                    echo "EC2 information not found, skipping deployment"
                     exit 0
                 fi
                 

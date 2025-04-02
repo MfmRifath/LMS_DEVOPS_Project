@@ -389,9 +389,11 @@ EOL
                     echo "Contents of ec2_info.txt:"
                     cat ec2_info.txt
                     
-                    # Export vars for Jenkins
-                    echo "export EC2_PUBLIC_IP=$PUBLIC_IP" > ec2_env.sh
-                    echo "export EC2_PUBLIC_DNS=$PUBLIC_DNS" >> ec2_env.sh
+                    # Write variables to environment file for Jenkins
+                    echo "EC2_AVAILABLE=true" > ec2_vars.sh
+                    echo "REMOTE_HOST=$PUBLIC_IP" >> ec2_vars.sh
+                    echo "EC2_HOST=$PUBLIC_DNS" >> ec2_vars.sh
+                    echo "DJANGO_ALLOWED_HOSTS=$PUBLIC_IP,$PUBLIC_DNS,localhost,127.0.0.1" >> ec2_vars.sh
                     
                     # Clean up credentials for security
                     rm -f ~/.aws/credentials
@@ -401,50 +403,32 @@ EOL
                 }
                 
                 script {
-                    if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt")) {
-                        def ec2Info = readFile("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt").trim()
-                        echo "EC2 info file content: ${ec2Info}"
+                    // Load EC2 variables directly from shell file
+                    if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_vars.sh")) {
+                        echo "Loading EC2 variables from file"
                         
-                        // Parse and update EC2 details with better error handling
-                        try {
-                            def publicIp = sh(script: "grep '^PUBLIC_IP=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
-                            def publicDns = sh(script: "grep '^PUBLIC_DNS=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
+                        def ec2Ip = sh(script: "grep 'REMOTE_HOST=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_vars.sh | cut -d= -f2", returnStdout: true).trim()
+                        def ec2Dns = sh(script: "grep 'EC2_HOST=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_vars.sh | cut -d= -f2", returnStdout: true).trim()
+                        def ec2Hosts = sh(script: "grep 'DJANGO_ALLOWED_HOSTS=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_vars.sh | cut -d= -f2", returnStdout: true).trim()
+                        
+                        echo "Extracted EC2 IP: ${ec2Ip}"
+                        echo "Extracted EC2 DNS: ${ec2Dns}"
+                        
+                        if (ec2Ip && ec2Dns) {
+                            env.EC2_AVAILABLE = "true"
+                            env.REMOTE_HOST = ec2Ip
+                            env.EC2_HOST = ec2Dns
+                            env.DJANGO_ALLOWED_HOSTS = ec2Hosts
                             
-                            echo "Extracted values - publicIp: '${publicIp}', publicDns: '${publicDns}'"
-                            
-                            // Set environment variables directly at the Jenkins level
-                            if (publicIp && publicDns) {
-                                env.EC2_AVAILABLE = "true"
-                                
-                                // Create a properties file for environment variables
-                                writeFile file: "${WORKSPACE}/ec2_props.txt", text: """
-                                EC2_AVAILABLE=true
-                                REMOTE_HOST=${publicIp}
-                                EC2_HOST=${publicDns}
-                                DJANGO_ALLOWED_HOSTS=${publicIp},${publicDns},localhost,127.0.0.1
-                                """
-                                
-                                // Load the properties file into environment variables
-                                def props = readProperties file: "${WORKSPACE}/ec2_props.txt"
-                                env.REMOTE_HOST = props.REMOTE_HOST
-                                env.EC2_HOST = props.EC2_HOST
-                                env.DJANGO_ALLOWED_HOSTS = props.DJANGO_ALLOWED_HOSTS
-                                
-                                echo "Updated EC2 details (CRITICAL CHECK):"
-                                echo "EC2_AVAILABLE=${env.EC2_AVAILABLE}"
-                                echo "REMOTE_HOST=${env.REMOTE_HOST}"
-                                echo "EC2_HOST=${env.EC2_HOST}"
-                                echo "DJANGO_ALLOWED_HOSTS=${env.DJANGO_ALLOWED_HOSTS}"
-                            } else {
-                                echo "EC2 instance created but IP or DNS information not available"
-                                env.EC2_AVAILABLE = "false"
-                            }
-                        } catch (Exception e) {
-                            echo "Error extracting EC2 information: ${e.message}"
+                            echo "Set EC2_AVAILABLE to: ${env.EC2_AVAILABLE}"
+                            echo "Set REMOTE_HOST to: ${env.REMOTE_HOST}"
+                            echo "Set EC2_HOST to: ${env.EC2_HOST}"
+                        } else {
+                            echo "Failed to extract EC2 information"
                             env.EC2_AVAILABLE = "false"
                         }
                     } else {
-                        echo "ec2_info.txt not found - EC2 setup may have failed"
+                        echo "ec2_vars.sh not found"
                         env.EC2_AVAILABLE = "false"
                     }
                 }
@@ -454,13 +438,13 @@ EOL
         stage('Check EC2 Connectivity') {
             when {
                 expression { 
-                    echo "Check connectivity - EC2_AVAILABLE=${env.EC2_AVAILABLE}"
+                    echo "EC2_AVAILABLE value: ${env.EC2_AVAILABLE}"
                     return env.EC2_AVAILABLE == 'true' 
                 }
             }
             steps {
                 script {
-                    echo "Attempting to connect to EC2 at ${env.EC2_HOST} (${env.REMOTE_HOST})"
+                    echo "Attempting to connect to EC2 at ${env.EC2_HOST}"
                     try {
                         withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
                             sh '''
@@ -492,7 +476,7 @@ EOL
         stage('Deploy on EC2') {
             when {
                 expression {
-                    echo "Deploy - EC2_AVAILABLE=${env.EC2_AVAILABLE}"
+                    echo "EC2_AVAILABLE value for deployment: ${env.EC2_AVAILABLE}"
                     return env.EC2_AVAILABLE == 'true'
                 }
             }
@@ -570,86 +554,77 @@ EOF
 
     post {
         success {
-            node(null) {
-                script {
-                    echo "=============================================="
-                    echo "CI/CD Pipeline executed successfully!"
-                    echo "Application built and published to Docker Hub"
-                    
-                    if (env.EC2_AVAILABLE == 'true') {
-                        echo "Application deployed to EC2 at ${EC2_HOST}"
-                        echo "You can access the application at: http://${REMOTE_HOST}:8000"
-                    } else if (env.EC2_AVAILABLE == 'warning') {
-                        echo "⚠️ WARNING: EC2 instance exists but SSH connection failed"
-                        echo "Application deployment skipped - manual intervention required"
-                        echo "Please check SSH key and security group settings"
-                    } else {
-                        echo "EC2 deployment skipped - instance not available"
-                    }
-                    
-                    echo "MongoDB connection configured correctly"
-                    echo "=============================================="
+            echo "=============================================="
+            echo "CI/CD Pipeline executed successfully!"
+            echo "Application built and published to Docker Hub"
+            
+            script {
+                if (env.EC2_AVAILABLE == 'true') {
+                    echo "Application deployed to EC2 at ${env.EC2_HOST}"
+                    echo "You can access the application at: http://${env.REMOTE_HOST}:8000"
+                } else if (env.EC2_AVAILABLE == 'warning') {
+                    echo "⚠️ WARNING: EC2 instance exists but SSH connection failed"
+                    echo "Application deployment skipped - manual intervention required"
+                    echo "Please check SSH key and security group settings"
+                } else {
+                    echo "EC2 deployment skipped - instance not available"
                 }
             }
+            
+            echo "MongoDB connection configured correctly"
+            echo "=============================================="
         }
         
         failure {
-            node(null) {
-                echo "=============================================="
-                echo "CI/CD Pipeline failed. Check the logs for details."
-                echo "=============================================="
-                
-                script {
+            echo "=============================================="
+            echo "CI/CD Pipeline failed. Check the logs for details."
+            echo "=============================================="
+            
+            script {
+                if (env.EC2_AVAILABLE == 'true') {
                     try {
-                        if (env.EC2_AVAILABLE == 'true') {
-                            withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
-                                sh '''
-                                ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i $SSH_KEY $EC2_USER@$EC2_HOST '
-                                    # Get logs for debugging
-                                    echo "=== FULL CONTAINER LOGS ==="
-                                    docker logs lms_backend || echo "Container not running"
-                                    
-                                    # Check container status
-                                    docker inspect lms_backend || echo "Container not found"
-                                '
-                                '''
-                            }
-                        } else {
-                            echo "EC2 instance not available - skipping container logs"
-                            
-                            if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt")) {
-                                echo "EC2 information from setup process:"
-                                sh "cat ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt"
-                            }
+                        withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
+                            sh '''
+                            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i $SSH_KEY $EC2_USER@$EC2_HOST '
+                                # Get logs for debugging
+                                echo "=== FULL CONTAINER LOGS ==="
+                                docker logs lms_backend || echo "Container not running"
+                                
+                                # Check container status
+                                docker inspect lms_backend || echo "Container not found"
+                            '
+                            '''
                         }
                     } catch (Exception e) {
                         echo "Could not execute SSH commands: ${e.message}"
+                    }
+                } else {
+                    echo "EC2 instance not available - skipping container logs"
+                    
+                    if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt")) {
+                        echo "EC2 information from setup process:"
+                        sh "cat ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt"
                     }
                 }
             }
         }
         
         always {
-            node(null) {
-                // Clean up workspace safely
-                script {
-                    try {
-                        // Cleanup virtual environments
-                        sh '''
-                        rm -rf $WORKSPACE/aws_cli_env || true
-                        rm -rf /tmp/mongo_test_env || true
-                        '''
-                        
-                        // Secure cleanup of AWS credentials
-                        sh '''
-                        rm -f ~/.aws/credentials || true
-                        '''
-                        
-                        // Manual cleanup instead of cleanWs
-                        sh 'find $WORKSPACE -name "venv" -type d -exec rm -rf {} + || true'
-                    } catch (Exception e) {
-                        echo "Workspace cleanup failed: ${e.message}"
-                    }
+            script {
+                try {
+                    // Cleanup virtual environments
+                    sh '''
+                    rm -rf $WORKSPACE/aws_cli_env || true
+                    rm -rf /tmp/mongo_test_env || true
+                    
+                    # Secure cleanup of AWS credentials
+                    rm -f ~/.aws/credentials || true
+                    
+                    # Manual cleanup instead of cleanWs
+                    find $WORKSPACE -name "venv" -type d -exec rm -rf {} + || true
+                    '''
+                } catch (Exception e) {
+                    echo "Workspace cleanup failed: ${e.message}"
                 }
             }
         }

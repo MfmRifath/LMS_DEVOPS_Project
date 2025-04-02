@@ -379,7 +379,7 @@ EOL
                     echo "PUBLIC_IP=$PUBLIC_IP"
                     echo "PUBLIC_DNS=$PUBLIC_DNS"
                     
-                    # Create output file
+                    # Create output file with clear formatting to avoid issues
                     cat > ec2_info.txt << EOL
 INSTANCE_EXISTS=true
 INSTANCE_ID=$INSTANCE_ID
@@ -387,8 +387,12 @@ INSTANCE_STATE=running
 PUBLIC_IP=$PUBLIC_IP
 PUBLIC_DNS=$PUBLIC_DNS
 EOL
+
+                    # Print file content to verify it was written correctly
+                    echo "Contents of ec2_info.txt:"
+                    cat ec2_info.txt
                     
-                    # Clean up for security
+                    # Clean up credentials for security
                     rm -f ~/.aws/credentials
                     
                     deactivate
@@ -398,22 +402,32 @@ EOL
                 script {
                     if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt")) {
                         def ec2Info = readFile("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt").trim()
+                        echo "EC2 info file content: ${ec2Info}"
                         
-                        // Parse and update EC2 details
-                        def publicIp = sh(script: "grep 'PUBLIC_IP' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
-                        def publicDns = sh(script: "grep 'PUBLIC_DNS' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
-                        
-                        if (publicIp && publicDns) {
-                            env.EC2_AVAILABLE = "true"
-                            env.REMOTE_HOST = publicIp
-                            env.EC2_HOST = publicDns
-                            env.DJANGO_ALLOWED_HOSTS = "${publicIp},${publicDns},localhost,127.0.0.1"
+                        // Parse and update EC2 details with better error handling
+                        try {
+                            def publicIp = sh(script: "grep '^PUBLIC_IP=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
+                            def publicDns = sh(script: "grep '^PUBLIC_DNS=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
                             
-                            echo "Updated EC2 details:"
-                            echo "REMOTE_HOST=${env.REMOTE_HOST}"
-                            echo "EC2_HOST=${env.EC2_HOST}"
-                        } else {
-                            echo "EC2 instance created but IP information not available yet"
+                            echo "Extracted values - publicIp: '${publicIp}', publicDns: '${publicDns}'"
+                            
+                            if (publicIp && publicDns) {
+                                env.REMOTE_HOST = publicIp
+                                env.EC2_HOST = publicDns
+                                env.DJANGO_ALLOWED_HOSTS = "${publicIp},${publicDns},localhost,127.0.0.1"
+                                env.EC2_AVAILABLE = "true"
+                                
+                                echo "Updated EC2 details:"
+                                echo "EC2_AVAILABLE=${env.EC2_AVAILABLE}"
+                                echo "REMOTE_HOST=${env.REMOTE_HOST}"
+                                echo "EC2_HOST=${env.EC2_HOST}"
+                                echo "DJANGO_ALLOWED_HOSTS=${env.DJANGO_ALLOWED_HOSTS}"
+                            } else {
+                                echo "EC2 instance created but IP or DNS information not available"
+                                env.EC2_AVAILABLE = "false"
+                            }
+                        } catch (Exception e) {
+                            echo "Error extracting EC2 information: ${e.message}"
                             env.EC2_AVAILABLE = "false"
                         }
                     } else {
@@ -430,6 +444,7 @@ EOL
             }
             steps {
                 script {
+                    echo "Attempting to connect to EC2 at ${env.EC2_HOST}"
                     try {
                         withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
                             sh '''
@@ -447,8 +462,7 @@ EOL
                         echo "3. The security group doesn't allow SSH access"
                         echo "4. The instance is in a different region than expected"
                         
-                        // Since instance exists but SSH is failing, keep EC2_AVAILABLE true
-                        // but warn the user - they might need to fix SSH access manually
+                        // Since instance exists but SSH is failing, set a warning flag
                         env.EC2_AVAILABLE = 'warning'
                     }
                 }

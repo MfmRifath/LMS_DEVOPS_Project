@@ -17,7 +17,7 @@ pipeline {
         DOCKER_PATH        = "/usr/local/bin/docker"
         
         // Credentials and secrets
-        SSH_KEY            = credentials('lms-ssh-key')
+        SSH_KEY            = credentials('aws-ssh-key')
         MONGO_URI          = credentials('mongodb-uri')
         SECRET_KEY         = credentials('django-secret-key')
         DJANGO_ALLOWED_HOSTS = "${REMOTE_HOST},localhost,127.0.0.1"

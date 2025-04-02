@@ -355,13 +355,15 @@ EOL
                     echo "EC2 IP: $EC2_IP"
                     echo "EC2 DNS: $EC2_DNS"
                 else
-                    echo "EC2 information not found, skipping SSH"
+                    echo "EC2 information not found, creating default ssh_status.sh"
+                    echo "EC2_SSH=failed" > $WORKSPACE/ssh_status.sh
                     exit 0
                 fi
                 
                 # Check if EC2 is available
                 if [ "$EC2_STATUS" != "available" ]; then
-                    echo "EC2 is not available, skipping SSH"
+                    echo "EC2 is not available, creating default ssh_status.sh"
+                    echo "EC2_SSH=failed" > $WORKSPACE/ssh_status.sh
                     exit 0
                 fi
                 
@@ -392,6 +394,7 @@ EOL
                     # Check if EC2 info exists
                     if [ ! -f "$WORKSPACE/ec2_info.sh" ]; then
                         echo "EC2 information not found, skipping SSH"
+                        echo "EC2_SSH=failed" > $WORKSPACE/ssh_status.sh
                         exit 0
                     fi
                     
@@ -401,6 +404,7 @@ EOL
                     # Check if EC2 is available
                     if [ "$EC2_STATUS" != "available" ]; then
                         echo "EC2 is not available, skipping SSH"
+                        echo "EC2_SSH=failed" > $WORKSPACE/ssh_status.sh
                         exit 0
                     fi
                     
@@ -414,14 +418,22 @@ EOL
         stage('Deploy to EC2') {
             steps {
                 sh '''
-                # Check if EC2 and SSH info exist
-                if [ ! -f "$WORKSPACE/ec2_info.sh" ] || [ ! -f "$WORKSPACE/ssh_status.sh" ]; then
-                    echo "EC2 or SSH information not found, skipping deployment"
+                # Check if EC2 info exists
+                if [ ! -f "$WORKSPACE/ec2_info.sh" ]; then
+                    echo "EC2 information not found, skipping deployment"
                     exit 0
                 fi
                 
-                # Load EC2 and SSH status
+                # Load EC2 status
                 source $WORKSPACE/ec2_info.sh
+                
+                # Check if SSH status file exists, if not create it with default
+                if [ ! -f "$WORKSPACE/ssh_status.sh" ]; then
+                    echo "SSH status file not found, creating default"
+                    echo "EC2_SSH=failed" > $WORKSPACE/ssh_status.sh
+                fi
+                
+                # Load SSH status
                 source $WORKSPACE/ssh_status.sh
                 
                 # Check if EC2 is available and SSH is successful

@@ -264,172 +264,102 @@ EOL
             }
         }
 
-        stage('Check/Create EC2 Instance') {
+        stage('Get EC2 Instance Info') {
             steps {
                 withCredentials([
                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
                     string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
-                    sh '''
-                    cd $WORKSPACE/LMS_DEVOPS_Project
-                    
-                    # Setup AWS credentials file with proper permissions
-                    mkdir -p ~/.aws
-                    touch ~/.aws/credentials ~/.aws/config
-                    chmod 600 ~/.aws/credentials ~/.aws/config
+                    script {
+                        sh '''
+                        cd $WORKSPACE/LMS_DEVOPS_Project
+                        
+                        # Setup AWS credentials file with proper permissions
+                        mkdir -p ~/.aws
+                        touch ~/.aws/credentials ~/.aws/config
+                        chmod 600 ~/.aws/credentials ~/.aws/config
 
-                    # Write credentials to file (securely)
-                    cat > ~/.aws/credentials << EOL
+                        # Write credentials to file (securely)
+                        cat > ~/.aws/credentials << EOL
 [default]
 aws_access_key_id = ${AWS_ACCESS_KEY_ID}
 aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}
 EOL
 
-                    cat > ~/.aws/config << EOL
+                        cat > ~/.aws/config << EOL
 [default]
 region = ${AWS_REGION}
 output = json
 EOL
-                    
-                    # Activate AWS CLI environment
-                    source $WORKSPACE/aws_cli_env/bin/activate
-                    
-                    # Verify AWS authentication works before proceeding
-                    echo "=== Testing AWS Authentication ==="
-                    if ! aws sts get-caller-identity; then
-                        echo "ERROR: AWS authentication failed. Check your credentials."
-                        echo "Recommended actions:"
-                        echo "1. Verify the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in Jenkins credentials"
-                        echo "2. Ensure the IAM user has appropriate permissions"
-                        echo "3. Check if AWS credentials are expired"
-                        exit 1
-                    fi
-                    
-                    # Check if EC2 instance exists
-                    echo "Checking for existing EC2 instance with tag Name=${EC2_NAME_TAG}..."
-                    INSTANCE_ID=$(aws ec2 describe-instances \
-                      --filters "Name=tag:Name,Values=${EC2_NAME_TAG}" "Name=instance-state-name,Values=running,stopped,pending" \
-                      --query "Reservations[*].Instances[*].InstanceId" \
-                      --output text)
-                      
-                    if [ -z "$INSTANCE_ID" ]; then
-                        echo "No instance found with tag Name=${EC2_NAME_TAG}"
-                        echo "Creating new EC2 instance..."
                         
-                        # Create security group if it doesn't exist
-                        SG_ID=$(aws ec2 describe-security-groups --group-names ${EC2_SG_NAME} --query "SecurityGroups[0].GroupId" --output text 2>/dev/null || echo "")
+                        # Activate AWS CLI environment
+                        source $WORKSPACE/aws_cli_env/bin/activate
                         
-                        if [ -z "$SG_ID" ] || [ "$SG_ID" == "None" ]; then
-                            echo "Creating security group ${EC2_SG_NAME}..."
-                            SG_ID=$(aws ec2 create-security-group --group-name ${EC2_SG_NAME} --description "Security group for LMS Backend" --query "GroupId" --output text)
-                            
-                            echo "Configuring security group rules..."
-                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
-                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0
-                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 8000 --cidr 0.0.0.0/0
-                        else
-                            echo "Using existing security group: $SG_ID"
+                        # Verify AWS authentication works before proceeding
+                        echo "=== Testing AWS Authentication ==="
+                        if ! aws sts get-caller-identity; then
+                            echo "ERROR: AWS authentication failed. Check your credentials."
+                            exit 1
                         fi
                         
-                        # Check if key pair exists
-                        KEY_EXISTS=$(aws ec2 describe-key-pairs --key-names ${EC2_KEY_NAME} 2>/dev/null || echo "")
-                        
-                        if [ -z "$KEY_EXISTS" ]; then
-                            echo "WARNING: Key pair ${EC2_KEY_NAME} does not exist!"
-                            echo "Please create this key pair in the AWS console before proceeding."
-                            echo "For now, we will continue but EC2 access may fail."
-                        fi
-                        
-                        # Launch EC2 instance
-                        echo "Launching new EC2 instance..."
-                        INSTANCE_ID=$(aws ec2 run-instances \
-                          --image-id ${EC2_IMAGE_ID} \
-                          --instance-type ${EC2_INSTANCE_TYPE} \
-                          --security-group-ids $SG_ID \
-                          --key-name ${EC2_KEY_NAME} \
-                          --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${EC2_NAME_TAG}}]" \
-                          --query "Instances[0].InstanceId" \
+                        # Check if EC2 instance exists
+                        echo "Checking for existing EC2 instance with tag Name=${EC2_NAME_TAG}..."
+                        INSTANCE_ID=$(aws ec2 describe-instances \
+                          --filters "Name=tag:Name,Values=${EC2_NAME_TAG}" "Name=instance-state-name,Values=running,stopped,pending" \
+                          --query "Reservations[*].Instances[*].InstanceId" \
                           --output text)
                           
-                        echo "New instance created with ID: $INSTANCE_ID"
-                        echo "Waiting for instance to start..."
-                        aws ec2 wait instance-running --instance-ids $INSTANCE_ID
-                    else
-                        echo "Found existing instance with ID: $INSTANCE_ID"
-                        
-                        # Start the instance if it's stopped
-                        STATE=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].State.Name" --output text)
-                        if [ "$STATE" == "stopped" ]; then
-                            echo "Starting stopped instance..."
-                            aws ec2 start-instances --instance-ids $INSTANCE_ID
-                            aws ec2 wait instance-running --instance-ids $INSTANCE_ID
-                        fi
-                    fi
-                    
-                    # Get instance details
-                    echo "Getting instance details..."
-                    PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
-                    PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicDnsName" --output text)
-                    
-                    echo "Instance information:"
-                    echo "INSTANCE_ID=$INSTANCE_ID"
-                    echo "PUBLIC_IP=$PUBLIC_IP"
-                    echo "PUBLIC_DNS=$PUBLIC_DNS"
-                    
-                    # Create output file with clear formatting to avoid issues
-                    cat > ec2_info.txt << EOL
-INSTANCE_EXISTS=true
-INSTANCE_ID=$INSTANCE_ID
-INSTANCE_STATE=running
-PUBLIC_IP=$PUBLIC_IP
-PUBLIC_DNS=$PUBLIC_DNS
-EOL
-
-                    # Print file content to verify it was written correctly
-                    echo "Contents of ec2_info.txt:"
-                    cat ec2_info.txt
-                    
-                    # Write variables to environment file for Jenkins
-                    echo "EC2_AVAILABLE=true" > ec2_vars.sh
-                    echo "REMOTE_HOST=$PUBLIC_IP" >> ec2_vars.sh
-                    echo "EC2_HOST=$PUBLIC_DNS" >> ec2_vars.sh
-                    echo "DJANGO_ALLOWED_HOSTS=$PUBLIC_IP,$PUBLIC_DNS,localhost,127.0.0.1" >> ec2_vars.sh
-                    
-                    # Clean up credentials for security
-                    rm -f ~/.aws/credentials
-                    
-                    deactivate
-                    '''
-                }
-                
-                script {
-                    // Load EC2 variables directly from shell file
-                    if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_vars.sh")) {
-                        echo "Loading EC2 variables from file"
-                        
-                        def ec2Ip = sh(script: "grep 'REMOTE_HOST=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_vars.sh | cut -d= -f2", returnStdout: true).trim()
-                        def ec2Dns = sh(script: "grep 'EC2_HOST=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_vars.sh | cut -d= -f2", returnStdout: true).trim()
-                        def ec2Hosts = sh(script: "grep 'DJANGO_ALLOWED_HOSTS=' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_vars.sh | cut -d= -f2", returnStdout: true).trim()
-                        
-                        echo "Extracted EC2 IP: ${ec2Ip}"
-                        echo "Extracted EC2 DNS: ${ec2Dns}"
-                        
-                        if (ec2Ip && ec2Dns) {
-                            env.EC2_AVAILABLE = "true"
-                            env.REMOTE_HOST = ec2Ip
-                            env.EC2_HOST = ec2Dns
-                            env.DJANGO_ALLOWED_HOSTS = ec2Hosts
+                        if [ -z "$INSTANCE_ID" ]; then
+                            echo "No instance found with tag Name=${EC2_NAME_TAG}"
+                            exit 0
+                        else
+                            echo "Found existing instance with ID: $INSTANCE_ID"
                             
-                            echo "Set EC2_AVAILABLE to: ${env.EC2_AVAILABLE}"
-                            echo "Set REMOTE_HOST to: ${env.REMOTE_HOST}"
-                            echo "Set EC2_HOST to: ${env.EC2_HOST}"
+                            # Get instance details
+                            echo "Getting instance details..."
+                            PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+                            PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicDnsName" --output text)
+                            
+                            echo "Instance information:"
+                            echo "INSTANCE_ID=$INSTANCE_ID"
+                            echo "PUBLIC_IP=$PUBLIC_IP"
+                            echo "PUBLIC_DNS=$PUBLIC_DNS"
+                            
+                            # Save values to file for Jenkins to read
+                            echo "$PUBLIC_IP" > ec2_ip.txt
+                            echo "$PUBLIC_DNS" > ec2_dns.txt
+                        fi
+                        
+                        # Clean up credentials for security
+                        rm -f ~/.aws/credentials
+                        deactivate
+                        '''
+                        
+                        // Read EC2 info from files
+                        if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_ip.txt") && 
+                            fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_dns.txt")) {
+                            
+                            def ec2Ip = sh(script: "cat ${WORKSPACE}/LMS_DEVOPS_Project/ec2_ip.txt", returnStdout: true).trim()
+                            def ec2Dns = sh(script: "cat ${WORKSPACE}/LMS_DEVOPS_Project/ec2_dns.txt", returnStdout: true).trim()
+                            
+                            echo "EC2 IP: ${ec2Ip}"
+                            echo "EC2 DNS: ${ec2Dns}"
+                            
+                            if (ec2Ip && ec2Dns) {
+                                // Set environment variables directly (must use env for later stages)
+                                env.EC2_AVAILABLE = "true"
+                                env.REMOTE_HOST = ec2Ip
+                                env.EC2_HOST = ec2Dns
+                                env.DJANGO_ALLOWED_HOSTS = "${ec2Ip},${ec2Dns},localhost,127.0.0.1"
+                                
+                                echo "SET EC2_AVAILABLE = true"
+                                echo "SET REMOTE_HOST = ${env.REMOTE_HOST}"
+                                echo "SET EC2_HOST = ${env.EC2_HOST}"
+                            }
                         } else {
-                            echo "Failed to extract EC2 information"
+                            echo "EC2 instance information not found"
                             env.EC2_AVAILABLE = "false"
                         }
-                    } else {
-                        echo "ec2_vars.sh not found"
-                        env.EC2_AVAILABLE = "false"
                     }
                 }
             }
@@ -438,8 +368,8 @@ EOL
         stage('Check EC2 Connectivity') {
             when {
                 expression { 
-                    echo "EC2_AVAILABLE value: ${env.EC2_AVAILABLE}"
-                    return env.EC2_AVAILABLE == 'true' 
+                    echo "EC2_AVAILABLE check (${env.EC2_AVAILABLE})"
+                    return env.EC2_AVAILABLE == "true"
                 }
             }
             steps {
@@ -448,26 +378,14 @@ EOL
                     try {
                         withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
                             sh '''
-                            # Print diagnostic info
-                            echo "Connecting to: $EC2_USER@$EC2_HOST"
-                            echo "Using key: $SSH_KEY"
-                            
-                            # Test SSH connection with increased timeout
-                            ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i $SSH_KEY $EC2_USER@$EC2_HOST "echo EC2 connection successful"
+                            echo "Debug: EC2_USER=$EC2_USER, EC2_HOST=$EC2_HOST"
+                            ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i $SSH_KEY $EC2_USER@$EC2_HOST "echo Connection successful"
                             '''
                         }
                         echo "EC2 connection successful"
-                        env.EC2_AVAILABLE = 'true'
                     } catch (Exception e) {
                         echo "EC2 instance is not accessible via SSH: ${e.message}"
-                        echo "This could be because:"
-                        echo "1. The instance was just created and needs more time to initialize"
-                        echo "2. The SSH key pair is not correctly set up"
-                        echo "3. The security group doesn't allow SSH access"
-                        echo "4. The instance is in a different region than expected"
-                        
-                        // Since instance exists but SSH is failing, set a warning flag
-                        env.EC2_AVAILABLE = 'warning'
+                        env.EC2_AVAILABLE = "false"
                     }
                 }
             }
@@ -476,8 +394,8 @@ EOL
         stage('Deploy on EC2') {
             when {
                 expression {
-                    echo "EC2_AVAILABLE value for deployment: ${env.EC2_AVAILABLE}"
-                    return env.EC2_AVAILABLE == 'true'
+                    echo "Deploy check (${env.EC2_AVAILABLE})"
+                    return env.EC2_AVAILABLE == "true"
                 }
             }
             steps {
@@ -562,12 +480,8 @@ EOF
                 if (env.EC2_AVAILABLE == 'true') {
                     echo "Application deployed to EC2 at ${env.EC2_HOST}"
                     echo "You can access the application at: http://${env.REMOTE_HOST}:8000"
-                } else if (env.EC2_AVAILABLE == 'warning') {
-                    echo "⚠️ WARNING: EC2 instance exists but SSH connection failed"
-                    echo "Application deployment skipped - manual intervention required"
-                    echo "Please check SSH key and security group settings"
                 } else {
-                    echo "EC2 deployment skipped - instance not available"
+                    echo "EC2 deployment skipped - instance not available or connectivity issue"
                 }
             }
             
@@ -579,53 +493,21 @@ EOF
             echo "=============================================="
             echo "CI/CD Pipeline failed. Check the logs for details."
             echo "=============================================="
-            
-            script {
-                if (env.EC2_AVAILABLE == 'true') {
-                    try {
-                        withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
-                            sh '''
-                            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i $SSH_KEY $EC2_USER@$EC2_HOST '
-                                # Get logs for debugging
-                                echo "=== FULL CONTAINER LOGS ==="
-                                docker logs lms_backend || echo "Container not running"
-                                
-                                # Check container status
-                                docker inspect lms_backend || echo "Container not found"
-                            '
-                            '''
-                        }
-                    } catch (Exception e) {
-                        echo "Could not execute SSH commands: ${e.message}"
-                    }
-                } else {
-                    echo "EC2 instance not available - skipping container logs"
-                    
-                    if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt")) {
-                        echo "EC2 information from setup process:"
-                        sh "cat ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt"
-                    }
-                }
-            }
         }
         
         always {
             script {
-                try {
-                    // Cleanup virtual environments
-                    sh '''
-                    rm -rf $WORKSPACE/aws_cli_env || true
-                    rm -rf /tmp/mongo_test_env || true
-                    
-                    # Secure cleanup of AWS credentials
-                    rm -f ~/.aws/credentials || true
-                    
-                    # Manual cleanup instead of cleanWs
-                    find $WORKSPACE -name "venv" -type d -exec rm -rf {} + || true
-                    '''
-                } catch (Exception e) {
-                    echo "Workspace cleanup failed: ${e.message}"
-                }
+                sh '''
+                # Cleanup virtual environments
+                rm -rf $WORKSPACE/aws_cli_env || true
+                rm -rf /tmp/mongo_test_env || true
+                
+                # Secure cleanup of AWS credentials
+                rm -f ~/.aws/credentials || true
+                
+                # Manual cleanup instead of cleanWs
+                find $WORKSPACE -name "venv" -type d -exec rm -rf {} + || true
+                '''
             }
         }
     }

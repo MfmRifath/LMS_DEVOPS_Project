@@ -17,9 +17,6 @@ pipeline {
         // Credentials and secrets
         DEBUG              = "0"
         
-        // Flag for EC2 availability (initialized to false)
-        EC2_AVAILABLE      = "false"
-        
         // AWS region and instance settings
         AWS_REGION         = "us-east-1"
         EC2_INSTANCE_TYPE  = "t2.micro"
@@ -270,201 +267,207 @@ EOL
                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
                     string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
-                    script {
-                        sh '''
-                        cd $WORKSPACE/LMS_DEVOPS_Project
-                        
-                        # Setup AWS credentials file with proper permissions
-                        mkdir -p ~/.aws
-                        touch ~/.aws/credentials ~/.aws/config
-                        chmod 600 ~/.aws/credentials ~/.aws/config
+                    sh '''
+                    cd $WORKSPACE/LMS_DEVOPS_Project
+                    
+                    # Setup AWS credentials file with proper permissions
+                    mkdir -p ~/.aws
+                    touch ~/.aws/credentials ~/.aws/config
+                    chmod 600 ~/.aws/credentials ~/.aws/config
 
-                        # Write credentials to file (securely)
-                        cat > ~/.aws/credentials << EOL
+                    # Write credentials to file (securely)
+                    cat > ~/.aws/credentials << EOL
 [default]
 aws_access_key_id = ${AWS_ACCESS_KEY_ID}
 aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}
 EOL
 
-                        cat > ~/.aws/config << EOL
+                    cat > ~/.aws/config << EOL
 [default]
 region = ${AWS_REGION}
 output = json
 EOL
+                    
+                    # Activate AWS CLI environment
+                    source $WORKSPACE/aws_cli_env/bin/activate
+                    
+                    # Verify AWS authentication works before proceeding
+                    echo "=== Testing AWS Authentication ==="
+                    if ! aws sts get-caller-identity; then
+                        echo "ERROR: AWS authentication failed. Check your credentials."
+                        exit 1
+                    fi
+                    
+                    # Check if EC2 instance exists
+                    echo "Checking for existing EC2 instance with tag Name=${EC2_NAME_TAG}..."
+                    INSTANCE_ID=$(aws ec2 describe-instances \
+                      --filters "Name=tag:Name,Values=${EC2_NAME_TAG}" "Name=instance-state-name,Values=running,stopped,pending" \
+                      --query "Reservations[*].Instances[*].InstanceId" \
+                      --output text)
+                      
+                    if [ -z "$INSTANCE_ID" ]; then
+                        echo "No instance found with tag Name=${EC2_NAME_TAG}"
+                        echo "EC2_AVAILABLE=false" > ec2_status.txt
+                        exit 0
+                    else
+                        echo "Found existing instance with ID: $INSTANCE_ID"
                         
-                        # Activate AWS CLI environment
-                        source $WORKSPACE/aws_cli_env/bin/activate
+                        # Get instance details
+                        echo "Getting instance details..."
+                        PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+                        PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicDnsName" --output text)
                         
-                        # Verify AWS authentication works before proceeding
-                        echo "=== Testing AWS Authentication ==="
-                        if ! aws sts get-caller-identity; then
-                            echo "ERROR: AWS authentication failed. Check your credentials."
-                            exit 1
-                        fi
+                        echo "Instance information:"
+                        echo "INSTANCE_ID=$INSTANCE_ID"
+                        echo "PUBLIC_IP=$PUBLIC_IP"
+                        echo "PUBLIC_DNS=$PUBLIC_DNS"
                         
-                        # Check if EC2 instance exists
-                        echo "Checking for existing EC2 instance with tag Name=${EC2_NAME_TAG}..."
-                        INSTANCE_ID=$(aws ec2 describe-instances \
-                          --filters "Name=tag:Name,Values=${EC2_NAME_TAG}" "Name=instance-state-name,Values=running,stopped,pending" \
-                          --query "Reservations[*].Instances[*].InstanceId" \
-                          --output text)
-                          
-                        if [ -z "$INSTANCE_ID" ]; then
-                            echo "No instance found with tag Name=${EC2_NAME_TAG}"
-                            exit 0
-                        else
-                            echo "Found existing instance with ID: $INSTANCE_ID"
-                            
-                            # Get instance details
-                            echo "Getting instance details..."
-                            PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
-                            PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicDnsName" --output text)
-                            
-                            echo "Instance information:"
-                            echo "INSTANCE_ID=$INSTANCE_ID"
-                            echo "PUBLIC_IP=$PUBLIC_IP"
-                            echo "PUBLIC_DNS=$PUBLIC_DNS"
-                            
-                            # Save values to file for Jenkins to read
-                            echo "$PUBLIC_IP" > ec2_ip.txt
-                            echo "$PUBLIC_DNS" > ec2_dns.txt
-                        fi
+                        # Save these variables to file
+                        echo "EC2_AVAILABLE=true" > ec2_status.txt
+                        echo "REMOTE_HOST=$PUBLIC_IP" >> ec2_status.txt
+                        echo "EC2_HOST=$PUBLIC_DNS" >> ec2_status.txt
+                        echo "DJANGO_ALLOWED_HOSTS=$PUBLIC_IP,$PUBLIC_DNS,localhost,127.0.0.1" >> ec2_status.txt
+                    fi
+                    
+                    # Clean up credentials for security
+                    rm -f ~/.aws/credentials
+                    deactivate
+                    '''
+                }
+                
+                script {
+                    // Create properties file for later stages
+                    def ec2StatusExists = fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_status.txt")
+                    if (ec2StatusExists) {
+                        def ec2Status = readFile("${WORKSPACE}/LMS_DEVOPS_Project/ec2_status.txt").trim()
+                        echo "EC2 Status file contents: ${ec2Status}"
                         
-                        # Clean up credentials for security
-                        rm -f ~/.aws/credentials
-                        deactivate
-                        '''
+                        // This loads the ec2_status.txt contents into a properties object
+                        def props = readProperties file: "${WORKSPACE}/LMS_DEVOPS_Project/ec2_status.txt"
                         
-                        // Read EC2 info from files
-                        if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_ip.txt") && 
-                            fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_dns.txt")) {
-                            
-                            def ec2Ip = sh(script: "cat ${WORKSPACE}/LMS_DEVOPS_Project/ec2_ip.txt", returnStdout: true).trim()
-                            def ec2Dns = sh(script: "cat ${WORKSPACE}/LMS_DEVOPS_Project/ec2_dns.txt", returnStdout: true).trim()
-                            
-                            echo "EC2 IP: ${ec2Ip}"
-                            echo "EC2 DNS: ${ec2Dns}"
-                            
-                            if (ec2Ip && ec2Dns) {
-                                // Set environment variables directly (must use env for later stages)
-                                env.EC2_AVAILABLE = "true"
-                                env.REMOTE_HOST = ec2Ip
-                                env.EC2_HOST = ec2Dns
-                                env.DJANGO_ALLOWED_HOSTS = "${ec2Ip},${ec2Dns},localhost,127.0.0.1"
-                                
-                                echo "SET EC2_AVAILABLE = true"
-                                echo "SET REMOTE_HOST = ${env.REMOTE_HOST}"
-                                echo "SET EC2_HOST = ${env.EC2_HOST}"
-                            }
-                        } else {
-                            echo "EC2 instance information not found"
-                            env.EC2_AVAILABLE = "false"
-                        }
+                        // Create a properties file that will be used for the next stages
+                        writeFile file: "${WORKSPACE}/ec2.properties", text: ec2Status
+                    } else {
+                        echo "EC2 status file not found - assuming EC2 is not available"
+                        writeFile file: "${WORKSPACE}/ec2.properties", text: "EC2_AVAILABLE=false"
                     }
                 }
             }
         }
 
         stage('Check EC2 Connectivity') {
-            when {
-                expression { 
-                    echo "EC2_AVAILABLE check (${env.EC2_AVAILABLE})"
-                    return env.EC2_AVAILABLE == "true"
-                }
-            }
             steps {
+                // First load the properties file to get EC2 status
                 script {
-                    echo "Attempting to connect to EC2 at ${env.EC2_HOST}"
-                    try {
-                        withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
-                            sh '''
-                            echo "Debug: EC2_USER=$EC2_USER, EC2_HOST=$EC2_HOST"
-                            ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i $SSH_KEY $EC2_USER@$EC2_HOST "echo Connection successful"
-                            '''
+                    def props = readProperties file: "${WORKSPACE}/ec2.properties"
+                    echo "EC2_AVAILABLE from properties: ${props.EC2_AVAILABLE}"
+                    
+                    if (props.EC2_AVAILABLE == 'true') {
+                        echo "EC2 instance is available, checking connectivity..."
+                        try {
+                            withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
+                                sh """
+                                echo "Debug: EC2_USER=${EC2_USER}, EC2_HOST=${props.EC2_HOST}"
+                                ssh -v -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i \$SSH_KEY ${EC2_USER}@${props.EC2_HOST} "echo Connection successful"
+                                """
+                            }
+                            echo "EC2 connection successful"
+                            // Update properties file to confirm EC2 connectivity
+                            props.put('EC2_CONNECTIVITY', 'true')
+                        } catch (Exception e) {
+                            echo "EC2 instance is not accessible via SSH: ${e.message}"
+                            props.put('EC2_CONNECTIVITY', 'false')
                         }
-                        echo "EC2 connection successful"
-                    } catch (Exception e) {
-                        echo "EC2 instance is not accessible via SSH: ${e.message}"
-                        env.EC2_AVAILABLE = "false"
+                        
+                        // Write the updated properties
+                        def propsText = props.collect { key, value -> "${key}=${value}" }.join('\n')
+                        writeFile file: "${WORKSPACE}/ec2.properties", text: propsText
+                    } else {
+                        echo "EC2 instance is not available, skipping connectivity check"
                     }
                 }
             }
         }
 
         stage('Deploy on EC2') {
-            when {
-                expression {
-                    echo "Deploy check (${env.EC2_AVAILABLE})"
-                    return env.EC2_AVAILABLE == "true"
-                }
-            }
             steps {
-                withCredentials([
-                    sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY'),
-                    string(credentialsId: 'mongodb-uri', variable: 'MONGO_URI'),
-                    string(credentialsId: 'django-secret-key', variable: 'SECRET_KEY')
-                ]) {
-                    sh '''
-                    # Print relevant environment variables
-                    echo "Deploying to EC2 at ${EC2_HOST} (${REMOTE_HOST})"
-                    echo "Using allowed hosts: ${DJANGO_ALLOWED_HOSTS}"
+                script {
+                    def props = readProperties file: "${WORKSPACE}/ec2.properties"
+                    echo "EC2_AVAILABLE for deployment: ${props.EC2_AVAILABLE}"
+                    echo "EC2_CONNECTIVITY for deployment: ${props.EC2_CONNECTIVITY}"
                     
-                    # Execute deployment script on EC2
-                    ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << EOF
-                    # Define variables on the remote server
-                    DOCKER_HUB_REPO="rifathmfm/lms_django"
-                    CONTAINER_NAME="lms_backend"
-                    MONGO_URI="${MONGO_URI}"
-                    SECRET_KEY="${SECRET_KEY}"
-                    DEBUG="${DEBUG}"
-                    DJANGO_ALLOWED_HOSTS="${DJANGO_ALLOWED_HOSTS}"
-                     
-                    # Enable error handling and debugging
-                    set -e
-                    set -x
+                    if (props.EC2_AVAILABLE == 'true' && props.EC2_CONNECTIVITY == 'true') {
+                        echo "Deploying to EC2..."
+                        withCredentials([
+                            sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY'),
+                            string(credentialsId: 'mongodb-uri', variable: 'MONGO_URI'),
+                            string(credentialsId: 'django-secret-key', variable: 'SECRET_KEY')
+                        ]) {
+                            sh """
+                            # Print relevant environment variables
+                            echo "Deploying to EC2 at ${props.EC2_HOST} (${props.REMOTE_HOST})"
+                            echo "Using allowed hosts: ${props.DJANGO_ALLOWED_HOSTS}"
+                            
+                            # Execute deployment script on EC2
+                            ssh -o StrictHostKeyChecking=no -i \$SSH_KEY ${EC2_USER}@${props.EC2_HOST} << EOF
+                            # Define variables on the remote server
+                            DOCKER_HUB_REPO="rifathmfm/lms_django"
+                            CONTAINER_NAME="lms_backend"
+                            MONGO_URI="\${MONGO_URI}"
+                            SECRET_KEY="\${SECRET_KEY}"
+                            DEBUG="${DEBUG}"
+                            DJANGO_ALLOWED_HOSTS="${props.DJANGO_ALLOWED_HOSTS}"
+                             
+                            # Enable error handling and debugging
+                            set -e
+                            set -x
 
-                    # Ensure Docker is installed
-                    if ! command -v docker &> /dev/null; then
-                        echo "Installing Docker..."
-                        sudo apt update
-                        sudo apt install -y docker.io
-                        sudo systemctl start docker
-                        sudo systemctl enable docker
-                        sudo usermod -aG docker ubuntu
-                    else
-                        echo "Docker is already installed."
-                    fi
+                            # Ensure Docker is installed
+                            if ! command -v docker &> /dev/null; then
+                                echo "Installing Docker..."
+                                sudo apt update
+                                sudo apt install -y docker.io
+                                sudo systemctl start docker
+                                sudo systemctl enable docker
+                                sudo usermod -aG docker ubuntu
+                            else
+                                echo "Docker is already installed."
+                            fi
 
-                    # Ensure correct Docker permissions
-                    sudo chmod 666 /var/run/docker.sock || true
+                            # Ensure correct Docker permissions
+                            sudo chmod 666 /var/run/docker.sock || true
 
-                    # Pull latest Docker image
-                    docker pull $DOCKER_HUB_REPO:latest
+                            # Pull latest Docker image
+                            docker pull \$DOCKER_HUB_REPO:latest
 
-                    # Stop and remove existing container if it exists
-                    docker stop $CONTAINER_NAME || true
-                    docker rm $CONTAINER_NAME || true
+                            # Stop and remove existing container if it exists
+                            docker stop \$CONTAINER_NAME || true
+                            docker rm \$CONTAINER_NAME || true
 
-                    # Create app directory if it doesn't exist
-                    sudo mkdir -p /var/www/lms_backend/static
-                    sudo mkdir -p /var/www/lms_backend/media
-                    sudo chmod -R 777 /var/www/lms_backend
+                            # Create app directory if it doesn't exist
+                            sudo mkdir -p /var/www/lms_backend/static
+                            sudo mkdir -p /var/www/lms_backend/media
+                            sudo chmod -R 777 /var/www/lms_backend
 
-                    # Run new container
-                    docker run -d -p 8000:8000 --restart=always --name $CONTAINER_NAME \\
-                    -e MONGO_URI="\${MONGO_URI}" \\
-                    -e SECRET_KEY="\${SECRET_KEY}" \\
-                    -e DEBUG="\${DEBUG}" \\
-                    -e DJANGO_ALLOWED_HOSTS="\${DJANGO_ALLOWED_HOSTS}" \\
-                    -e PYTHONUNBUFFERED="1" \\
-                    -v /var/www/lms_backend/static:/app/staticfiles \\
-                    -v /var/www/lms_backend/media:/app/media \\
-                    $DOCKER_HUB_REPO:latest
+                            # Run new container
+                            docker run -d -p 8000:8000 --restart=always --name \$CONTAINER_NAME \\
+                            -e MONGO_URI="\${MONGO_URI}" \\
+                            -e SECRET_KEY="\${SECRET_KEY}" \\
+                            -e DEBUG="\${DEBUG}" \\
+                            -e DJANGO_ALLOWED_HOSTS="\${DJANGO_ALLOWED_HOSTS}" \\
+                            -e PYTHONUNBUFFERED="1" \\
+                            -v /var/www/lms_backend/static:/app/staticfiles \\
+                            -v /var/www/lms_backend/media:/app/media \\
+                            \$DOCKER_HUB_REPO:latest
 
-                    echo "Deployment successful! Running containers:"
-                    docker ps -a
+                            echo "Deployment successful! Running containers:"
+                            docker ps -a
 EOF
-                    '''
+                            """
+                        }
+                    } else {
+                        echo "Skipping deployment - EC2 instance is not available or not accessible"
+                    }
                 }
             }
         }
@@ -477,9 +480,10 @@ EOF
             echo "Application built and published to Docker Hub"
             
             script {
-                if (env.EC2_AVAILABLE == 'true') {
-                    echo "Application deployed to EC2 at ${env.EC2_HOST}"
-                    echo "You can access the application at: http://${env.REMOTE_HOST}:8000"
+                def props = readProperties file: "${WORKSPACE}/ec2.properties"
+                if (props.EC2_AVAILABLE == 'true' && props.EC2_CONNECTIVITY == 'true') {
+                    echo "Application deployed to EC2 at ${props.EC2_HOST}"
+                    echo "You can access the application at: http://${props.REMOTE_HOST}:8000"
                 } else {
                     echo "EC2 deployment skipped - instance not available or connectivity issue"
                 }

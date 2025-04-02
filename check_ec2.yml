@@ -1,0 +1,57 @@
+---
+# Playbook to check if an EC2 instance exists
+- name: Check if EC2 instance exists
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    instance_name: "lms-backend"
+    region: "us-east-1"
+
+  tasks:
+    - name: Get EC2 instance information
+      amazon.aws.ec2_instance_info:
+        region: "{{ region }}"
+        filters:
+          "tag:Name": "{{ instance_name }}"
+          instance-state-name: ["running", "stopped", "pending"]
+      register: ec2_info
+    
+    - name: Set facts about EC2 instance
+      set_fact:
+        instance_exists: "{{ ec2_info.instances | length > 0 }}"
+        instance_id: "{{ ec2_info.instances[0].instance_id | default('') }}"
+        instance_state: "{{ ec2_info.instances[0].state.name | default('') }}"
+        public_ip: "{{ ec2_info.instances[0].public_ip_address | default('') }}"
+        public_dns: "{{ ec2_info.instances[0].public_dns_name | default('') }}"
+      when: ec2_info.instances | length > 0
+
+    - name: Set facts if instance doesn't exist
+      set_fact:
+        instance_exists: false
+        instance_id: ""
+        instance_state: ""
+        public_ip: ""
+        public_dns: ""
+      when: ec2_info.instances | length == 0
+
+    - name: Output instance information
+      debug:
+        msg: |
+          Instance exists: {{ instance_exists }}
+          Instance ID: {{ instance_id }}
+          Instance state: {{ instance_state }}
+          Public IP: {{ public_ip }}
+          Public DNS: {{ public_dns }}
+
+    - name: Create output file with instance information
+      copy:
+        content: |
+          INSTANCE_EXISTS={{ instance_exists }}
+          INSTANCE_ID={{ instance_id }}
+          INSTANCE_STATE={{ instance_state }}
+          PUBLIC_IP={{ public_ip }}
+          PUBLIC_DNS={{ public_dns }}
+        dest: ec2_info.txt
+        mode: '0644'

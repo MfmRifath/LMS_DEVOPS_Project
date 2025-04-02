@@ -1,0 +1,90 @@
+---
+# Playbook to create an EC2 instance if it doesn't exist
+- name: Create EC2 instance
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    instance_name: "lms-backend"
+    region: "us-east-1"
+    instance_type: "t2.micro"
+    image_id: "ami-0c7217cdde317cfec"  # Ubuntu 22.04 LTS in us-east-1
+    key_name: "lms_backend"  # Make sure this key exists in your AWS account
+    security_group: "lms-sg"
+    subnet_id: ""  # Leave empty to use default subnet
+
+  tasks:
+    - name: Create security group if it doesn't exist
+      amazon.aws.ec2_security_group:
+        name: "{{ security_group }}"
+        description: "Security group for LMS Backend"
+        region: "{{ region }}"
+        rules:
+          - proto: tcp
+            ports: 22
+            cidr_ip: 0.0.0.0/0
+            rule_desc: "Allow SSH"
+          - proto: tcp
+            ports: 80
+            cidr_ip: 0.0.0.0/0
+            rule_desc: "Allow HTTP"
+          - proto: tcp
+            ports: 8000
+            cidr_ip: 0.0.0.0/0
+            rule_desc: "Allow Django port"
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+      register: sg_result
+
+    - name: Launch EC2 instance
+      amazon.aws.ec2_instance:
+        name: "{{ instance_name }}"
+        key_name: "{{ key_name }}"
+        security_group: "{{ security_group }}"
+        instance_type: "{{ instance_type }}"
+        image_id: "{{ image_id }}"
+        region: "{{ region }}"
+        subnet_id: "{{ subnet_id | default(omit) }}"
+        wait: yes
+        state: running
+        tags:
+          Name: "{{ instance_name }}"
+          Environment: "production"
+          Project: "LMS"
+      register: ec2_result
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ ec2_result.instances[0].public_dns_name }}"
+        port: 22
+        delay: 10
+        timeout: 320
+        state: started
+      when: ec2_result.instances is defined
+
+    - name: Set facts about the created EC2 instance
+      set_fact:
+        instance_id: "{{ ec2_result.instances[0].instance_id }}"
+        public_ip: "{{ ec2_result.instances[0].public_ip_address }}"
+        public_dns: "{{ ec2_result.instances[0].public_dns_name }}"
+      when: ec2_result.instances is defined
+
+    - name: Output instance information
+      debug:
+        msg: |
+          Instance ID: {{ instance_id }}
+          Public IP: {{ public_ip }}
+          Public DNS: {{ public_dns }}
+      when: ec2_result.instances is defined
+
+    - name: Create output file with instance information
+      copy:
+        content: |
+          INSTANCE_ID={{ instance_id }}
+          PUBLIC_IP={{ public_ip }}
+          PUBLIC_DNS={{ public_dns }}
+        dest: new_ec2_info.txt
+        mode: '0644'
+      when: ec2_result.instances is defined

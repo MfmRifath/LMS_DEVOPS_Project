@@ -1,5 +1,11 @@
 pipeline {
     agent any
+    
+    // Add this options section for workspace cleaning
+    options {
+        // Clean workspace before every build
+        cleanWs()
+    }
 
     environment {
         // Application settings
@@ -36,11 +42,8 @@ pipeline {
         stage('Clone Repository') {
             steps {
                 sh '''
-                if [ ! -d "$WORKSPACE/LMS_DEVOPS_Project" ]; then
-                    git clone https://github.com/MfmRifath/LMS_DEVOPS_Project.git $WORKSPACE/LMS_DEVOPS_Project
-                else
-                    cd $WORKSPACE/LMS_DEVOPS_Project && git pull origin main
-                fi
+                # Fresh clone since workspace was cleaned
+                git clone https://github.com/MfmRifath/LMS_DEVOPS_Project.git $WORKSPACE/LMS_DEVOPS_Project
                 '''
             }
         }

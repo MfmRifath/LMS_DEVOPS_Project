@@ -23,10 +23,13 @@ pipeline {
         // Flag for EC2 availability (initialized to false)
         EC2_AVAILABLE      = "false"
         
-        // AWS credentials for Ansible
-        AWS_ACCESS_KEY_ID     = credentials('aws-access-key-id')
-        AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
-        AWS_REGION            = "us-east-1"
+        // AWS region and instance settings
+        AWS_REGION         = "us-east-1"
+        EC2_INSTANCE_TYPE  = "t2.micro"
+        EC2_IMAGE_ID       = "ami-0c7217cdde317cfec"  // Ubuntu 22.04 LTS
+        EC2_NAME_TAG       = "lms-backend"
+        EC2_KEY_NAME       = "lms_backend"
+        EC2_SG_NAME        = "lms-sg"
     }
 
     stages {
@@ -52,10 +55,59 @@ pipeline {
                 source venv/bin/activate
                 
                 # Install dependencies with verbose output to debug package issues
-                pip install -r requirements.txt -v || echo "Could not install dependencies, continuing anyway"
+                pip install -r requirements.txt || echo "Could not install dependencies, continuing anyway"
                 
                 # Install django-cors-headers explicitly (fix for corsheaders module error)
                 pip install django-cors-headers
+                
+                # Create script to fix Django settings
+                cat > fix_django_settings.sh << 'EOL'
+#!/bin/bash
+# Find the settings.py file
+SETTINGS_FILE=$(find . -name "settings.py" | head -n 1)
+
+if [ -z "$SETTINGS_FILE" ]; then
+    echo "Could not find settings.py file"
+    exit 1
+fi
+
+echo "Found settings file at: $SETTINGS_FILE"
+
+# Check if corsheaders is in INSTALLED_APPS
+if grep -q "'corsheaders'," "$SETTINGS_FILE"; then
+    echo "corsheaders is already in INSTALLED_APPS"
+else
+    # Add corsheaders to INSTALLED_APPS
+    echo "Adding corsheaders to INSTALLED_APPS"
+    sed -i.bak -e "/INSTALLED_APPS/,/]/ s/]/    'corsheaders',\n]/" "$SETTINGS_FILE"
+fi
+
+# Check if CorsMiddleware is in MIDDLEWARE
+if grep -q "'corsheaders.middleware.CorsMiddleware'," "$SETTINGS_FILE"; then
+    echo "CorsMiddleware is already in MIDDLEWARE"
+else
+    # Add CorsMiddleware to the beginning of MIDDLEWARE
+    echo "Adding CorsMiddleware to MIDDLEWARE"
+    sed -i.bak -e "/MIDDLEWARE/,/]/ s/\\[/\\[    'corsheaders.middleware.CorsMiddleware',/" "$SETTINGS_FILE"
+fi
+
+# Add CORS_ALLOW_ALL_ORIGINS setting if not present
+if grep -q "CORS_ALLOW_ALL_ORIGINS" "$SETTINGS_FILE"; then
+    echo "CORS_ALLOW_ALL_ORIGINS is already set"
+else
+    echo "Adding CORS_ALLOW_ALL_ORIGINS setting"
+    echo "# CORS settings for development" >> "$SETTINGS_FILE"
+    echo "CORS_ALLOW_ALL_ORIGINS = True  # Set to False in production" >> "$SETTINGS_FILE"
+fi
+
+echo "Django settings updated successfully"
+EOL
+
+                # Make the script executable
+                chmod +x fix_django_settings.sh
+                
+                # Run the script to fix Django settings
+                ./fix_django_settings.sh || echo "Could not fix Django settings, continuing anyway"
                 
                 # Run Django tests if available
                 python manage.py test || echo "No tests available, skipping..."
@@ -122,13 +174,21 @@ EOL
                 echo "Docker version:"
                 $DOCKER_PATH --version || echo "Docker not installed or not in PATH"
                 
+                # Try different Docker socket locations for macOS
+                for SOCKET in "/var/run/docker.sock" "$HOME/.docker/run/docker.sock" "$HOME/Library/Containers/com.docker.docker/Data/docker.sock"; do
+                    if [ -S "$SOCKET" ]; then
+                        echo "Found Docker socket at: $SOCKET"
+                        export DOCKER_HOST="unix://$SOCKET"
+                        break
+                    fi
+                done
+                
                 # Fix Docker credential helper issue
                 mkdir -p $HOME/.docker
                 echo '{"credsStore":""}' > $HOME/.docker/config.json
                 
-                # List available Docker credential helpers
-                echo "Available credential helpers:"
-                which docker-credential-osxkeychain docker-credential-desktop 2>/dev/null || echo "No credential helpers found"
+                # Test Docker connection
+                $DOCKER_PATH info || echo "Docker daemon not accessible"
                 '''
             }
         }
@@ -138,6 +198,15 @@ EOL
                 withCredentials([usernamePassword(credentialsId: 'docker-registry-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
                     sh '''
                     cd $WORKSPACE/LMS_DEVOPS_Project
+                    
+                    # For macOS, try setting DOCKER_HOST explicitly
+                    for SOCKET in "/var/run/docker.sock" "$HOME/.docker/run/docker.sock" "$HOME/Library/Containers/com.docker.docker/Data/docker.sock"; do
+                        if [ -S "$SOCKET" ]; then
+                            echo "Using Docker socket at: $SOCKET"
+                            export DOCKER_HOST="unix://$SOCKET"
+                            break
+                        fi
+                    done
                     
                     # Login to Docker Hub with error handling
                     echo "Logging in to Docker Hub as $DOCKER_USERNAME"
@@ -171,198 +240,29 @@ EOL
             }
         }
 
-        stage('Setup Ansible for AWS') {
+        stage('Setup AWS CLI') {
             steps {
                 sh '''
-                cd $WORKSPACE/LMS_DEVOPS_Project
+                # Create AWS CLI virtual environment
+                python3 -m venv $WORKSPACE/aws_cli_env
+                source $WORKSPACE/aws_cli_env/bin/activate
                 
-                # Create setup script for Ansible
-                cat > setup_ansible.sh << 'EOL'
-#!/bin/bash
-# Install required Ansible collections for AWS
-
-# Install Ansible if not installed
-if ! command -v ansible &> /dev/null; then
-    echo "Installing Ansible..."
-    pip install ansible
-fi
-
-# Install required collections
-echo "Installing Ansible AWS collection..."
-ansible-galaxy collection install amazon.aws
-
-# Install required Python packages
-echo "Installing required Python packages..."
-pip install boto3 botocore
-EOL
+                # Install and verify AWS CLI
+                pip install --upgrade pip
+                pip install awscli boto3
                 
-                # Make script executable
-                chmod +x setup_ansible.sh
+                # Test AWS CLI
+                aws --version
                 
-                # Run setup script
-                ./setup_ansible.sh
+                # Create AWS credentials file
+                mkdir -p ~/.aws
                 
-                # Create check EC2 playbook
-                cat > check_ec2.yml << 'EOL'
----
-# Playbook to check if an EC2 instance exists
-- name: Check if EC2 instance exists
-  hosts: localhost
-  connection: local
-  gather_facts: false
-
-  vars:
-    instance_name: "lms-backend"
-    region: "us-east-1"
-
-  tasks:
-    - name: Get EC2 instance information
-      amazon.aws.ec2_instance_info:
-        region: "{{ region }}"
-        filters:
-          "tag:Name": "{{ instance_name }}"
-          instance-state-name: ["running", "stopped", "pending"]
-      register: ec2_info
-    
-    - name: Set facts about EC2 instance
-      set_fact:
-        instance_exists: "{{ ec2_info.instances | length > 0 }}"
-        instance_id: "{{ ec2_info.instances[0].instance_id | default('') }}"
-        instance_state: "{{ ec2_info.instances[0].state.name | default('') }}"
-        public_ip: "{{ ec2_info.instances[0].public_ip_address | default('') }}"
-        public_dns: "{{ ec2_info.instances[0].public_dns_name | default('') }}"
-      when: ec2_info.instances | length > 0
-
-    - name: Set facts if instance doesn't exist
-      set_fact:
-        instance_exists: false
-        instance_id: ""
-        instance_state: ""
-        public_ip: ""
-        public_dns: ""
-      when: ec2_info.instances | length == 0
-
-    - name: Output instance information
-      debug:
-        msg: |
-          Instance exists: {{ instance_exists }}
-          Instance ID: {{ instance_id }}
-          Instance state: {{ instance_state }}
-          Public IP: {{ public_ip }}
-          Public DNS: {{ public_dns }}
-
-    - name: Create output file with instance information
-      copy:
-        content: |
-          INSTANCE_EXISTS={{ instance_exists }}
-          INSTANCE_ID={{ instance_id }}
-          INSTANCE_STATE={{ instance_state }}
-          PUBLIC_IP={{ public_ip }}
-          PUBLIC_DNS={{ public_dns }}
-        dest: ec2_info.txt
-        mode: '0644'
-EOL
-
-                # Create EC2 instance playbook
-                cat > create_ec2.yml << 'EOL'
----
-# Playbook to create an EC2 instance if it doesn't exist
-- name: Create EC2 instance
-  hosts: localhost
-  connection: local
-  gather_facts: false
-
-  vars:
-    instance_name: "lms-backend"
-    region: "us-east-1"
-    instance_type: "t2.micro"
-    image_id: "ami-0c7217cdde317cfec"  # Ubuntu 22.04 LTS in us-east-1
-    key_name: "lms_backend"  # Make sure this key exists in your AWS account
-    security_group: "lms-sg"
-    subnet_id: ""  # Leave empty to use default subnet
-
-  tasks:
-    - name: Create security group if it doesn't exist
-      amazon.aws.ec2_security_group:
-        name: "{{ security_group }}"
-        description: "Security group for LMS Backend"
-        region: "{{ region }}"
-        rules:
-          - proto: tcp
-            ports: 22
-            cidr_ip: 0.0.0.0/0
-            rule_desc: "Allow SSH"
-          - proto: tcp
-            ports: 80
-            cidr_ip: 0.0.0.0/0
-            rule_desc: "Allow HTTP"
-          - proto: tcp
-            ports: 8000
-            cidr_ip: 0.0.0.0/0
-            rule_desc: "Allow Django port"
-        rules_egress:
-          - proto: all
-            cidr_ip: 0.0.0.0/0
-      register: sg_result
-
-    - name: Launch EC2 instance
-      amazon.aws.ec2_instance:
-        name: "{{ instance_name }}"
-        key_name: "{{ key_name }}"
-        security_group: "{{ security_group }}"
-        instance_type: "{{ instance_type }}"
-        image_id: "{{ image_id }}"
-        region: "{{ region }}"
-        subnet_id: "{{ subnet_id | default(omit) }}"
-        wait: yes
-        state: running
-        tags:
-          Name: "{{ instance_name }}"
-          Environment: "production"
-          Project: "LMS"
-      register: ec2_result
-
-    - name: Wait for SSH to come up
-      wait_for:
-        host: "{{ ec2_result.instances[0].public_dns_name }}"
-        port: 22
-        delay: 10
-        timeout: 320
-        state: started
-      when: ec2_result.instances is defined
-
-    - name: Set facts about the created EC2 instance
-      set_fact:
-        instance_id: "{{ ec2_result.instances[0].instance_id }}"
-        public_ip: "{{ ec2_result.instances[0].public_ip_address }}"
-        public_dns: "{{ ec2_result.instances[0].public_dns_name }}"
-      when: ec2_result.instances is defined
-
-    - name: Output instance information
-      debug:
-        msg: |
-          Instance ID: {{ instance_id }}
-          Public IP: {{ public_ip }}
-          Public DNS: {{ public_dns }}
-      when: ec2_result.instances is defined
-
-    - name: Create output file with instance information
-      copy:
-        content: |
-          INSTANCE_ID={{ instance_id }}
-          PUBLIC_IP={{ public_ip }}
-          PUBLIC_DNS={{ public_dns }}
-        dest: new_ec2_info.txt
-        mode: '0644'
-      when: ec2_result.instances is defined
-EOL
-                
-                echo "Ansible playbooks created successfully"
+                deactivate
                 '''
             }
         }
 
-        stage('Check EC2 Instance') {
+        stage('Check/Create EC2 Instance') {
             steps {
                 withCredentials([
                     string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
@@ -371,128 +271,162 @@ EOL
                     sh '''
                     cd $WORKSPACE/LMS_DEVOPS_Project
                     
-                    # Run Ansible playbook to check if EC2 instance exists
-                    echo "Checking if EC2 instance exists..."
-                    ansible-playbook check_ec2.yml
+                    # Setup AWS credentials file
+                    mkdir -p ~/.aws
+                    cat > ~/.aws/credentials << EOL
+[default]
+aws_access_key_id = ${AWS_ACCESS_KEY_ID}
+aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}
+EOL
+
+                    cat > ~/.aws/config << EOL
+[default]
+region = ${AWS_REGION}
+output = json
+EOL
                     
-                    # Check if instance exists
-                    if grep -q "INSTANCE_EXISTS=True" ec2_info.txt; then
-                        echo "EC2 instance exists"
-                        export EC2_AVAILABLE="true"
+                    # Activate AWS CLI environment
+                    source $WORKSPACE/aws_cli_env/bin/activate
+                    
+                    # Check if EC2 instance exists
+                    echo "Checking for existing EC2 instance with tag Name=${EC2_NAME_TAG}..."
+                    INSTANCE_ID=$(aws ec2 describe-instances \
+                      --filters "Name=tag:Name,Values=${EC2_NAME_TAG}" "Name=instance-state-name,Values=running,stopped,pending" \
+                      --query "Reservations[*].Instances[*].InstanceId" \
+                      --output text)
+                      
+                    if [ -z "$INSTANCE_ID" ]; then
+                        echo "No instance found with tag Name=${EC2_NAME_TAG}"
+                        echo "Creating new EC2 instance..."
                         
-                        # Update EC2 connection details
-                        export REMOTE_HOST=$(grep "PUBLIC_IP" ec2_info.txt | cut -d= -f2)
-                        export EC2_HOST=$(grep "PUBLIC_DNS" ec2_info.txt | cut -d= -f2)
+                        # Create security group if it doesn't exist
+                        SG_ID=$(aws ec2 describe-security-groups --group-names ${EC2_SG_NAME} --query "SecurityGroups[0].GroupId" --output text 2>/dev/null || echo "")
                         
-                        echo "Updated EC2 details:"
-                        echo "REMOTE_HOST=$REMOTE_HOST"
-                        echo "EC2_HOST=$EC2_HOST"
+                        if [ -z "$SG_ID" ] || [ "$SG_ID" == "None" ]; then
+                            echo "Creating security group ${EC2_SG_NAME}..."
+                            SG_ID=$(aws ec2 create-security-group --group-name ${EC2_SG_NAME} --description "Security group for LMS Backend" --query "GroupId" --output text)
+                            
+                            echo "Configuring security group rules..."
+                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
+                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0
+                            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 8000 --cidr 0.0.0.0/0
+                        else
+                            echo "Using existing security group: $SG_ID"
+                        fi
+                        
+                        # Check if key pair exists
+                        KEY_EXISTS=$(aws ec2 describe-key-pairs --key-names ${EC2_KEY_NAME} 2>/dev/null || echo "")
+                        
+                        if [ -z "$KEY_EXISTS" ]; then
+                            echo "WARNING: Key pair ${EC2_KEY_NAME} does not exist!"
+                            echo "Please create this key pair in the AWS console before proceeding."
+                            echo "For now, we will continue but EC2 access may fail."
+                        fi
+                        
+                        # Launch EC2 instance
+                        echo "Launching new EC2 instance..."
+                        INSTANCE_ID=$(aws ec2 run-instances \
+                          --image-id ${EC2_IMAGE_ID} \
+                          --instance-type ${EC2_INSTANCE_TYPE} \
+                          --security-group-ids $SG_ID \
+                          --key-name ${EC2_KEY_NAME} \
+                          --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${EC2_NAME_TAG}}]" \
+                          --query "Instances[0].InstanceId" \
+                          --output text)
+                          
+                        echo "New instance created with ID: $INSTANCE_ID"
+                        echo "Waiting for instance to start..."
+                        aws ec2 wait instance-running --instance-ids $INSTANCE_ID
                     else
-                        echo "EC2 instance does not exist, will create it in the next stage"
+                        echo "Found existing instance with ID: $INSTANCE_ID"
+                        
+                        # Start the instance if it's stopped
+                        STATE=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].State.Name" --output text)
+                        if [ "$STATE" == "stopped" ]; then
+                            echo "Starting stopped instance..."
+                            aws ec2 start-instances --instance-ids $INSTANCE_ID
+                            aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+                        fi
                     fi
+                    
+                    # Get instance details
+                    echo "Getting instance details..."
+                    PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+                    PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicDnsName" --output text)
+                    
+                    echo "Instance information:"
+                    echo "INSTANCE_ID=$INSTANCE_ID"
+                    echo "PUBLIC_IP=$PUBLIC_IP"
+                    echo "PUBLIC_DNS=$PUBLIC_DNS"
+                    
+                    # Create output file
+                    cat > ec2_info.txt << EOL
+INSTANCE_EXISTS=true
+INSTANCE_ID=$INSTANCE_ID
+INSTANCE_STATE=running
+PUBLIC_IP=$PUBLIC_IP
+PUBLIC_DNS=$PUBLIC_DNS
+EOL
+                    
+                    deactivate
                     '''
                 }
                 
                 script {
-                    def ec2Info = readFile("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt").trim()
-                    if (ec2Info.contains("INSTANCE_EXISTS=True")) {
-                        env.EC2_AVAILABLE = "true"
+                    if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt")) {
+                        def ec2Info = readFile("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt").trim()
                         
                         // Parse and update EC2 details
                         def publicIp = sh(script: "grep 'PUBLIC_IP' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
                         def publicDns = sh(script: "grep 'PUBLIC_DNS' ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
                         
                         if (publicIp && publicDns) {
+                            env.EC2_AVAILABLE = "true"
                             env.REMOTE_HOST = publicIp
                             env.EC2_HOST = publicDns
                             env.DJANGO_ALLOWED_HOSTS = "${publicIp},${publicDns},localhost,127.0.0.1"
                             
-                            echo "Updated EC2 details from existing instance:"
+                            echo "Updated EC2 details:"
                             echo "REMOTE_HOST=${env.REMOTE_HOST}"
                             echo "EC2_HOST=${env.EC2_HOST}"
+                        } else {
+                            echo "EC2 instance created but IP information not available yet"
+                            env.EC2_AVAILABLE = "false"
                         }
                     } else {
+                        echo "ec2_info.txt not found - EC2 setup may have failed"
                         env.EC2_AVAILABLE = "false"
-                    }
-                }
-            }
-        }
-        
-        stage('Create EC2 Instance if Needed') {
-            when {
-                expression { return env.EC2_AVAILABLE == 'false' }
-            }
-            steps {
-                withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
-                    sh '''
-                    cd $WORKSPACE/LMS_DEVOPS_Project
-                    
-                    # Run Ansible playbook to create EC2 instance
-                    echo "Creating EC2 instance..."
-                    ansible-playbook create_ec2.yml
-                    
-                    # Check if instance was created successfully
-                    if [ -f new_ec2_info.txt ]; then
-                        echo "EC2 instance created successfully"
-                        export EC2_AVAILABLE="true"
-                        
-                        # Update EC2 connection details
-                        export REMOTE_HOST=$(grep "PUBLIC_IP" new_ec2_info.txt | cut -d= -f2)
-                        export EC2_HOST=$(grep "PUBLIC_DNS" new_ec2_info.txt | cut -d= -f2)
-                        
-                        echo "Updated EC2 details:"
-                        echo "REMOTE_HOST=$REMOTE_HOST"
-                        echo "EC2_HOST=$EC2_HOST"
-                    else
-                        echo "Failed to create EC2 instance"
-                    fi
-                    '''
-                }
-                
-                script {
-                    if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/new_ec2_info.txt")) {
-                        env.EC2_AVAILABLE = "true"
-                        
-                        // Parse and update EC2 details
-                        def publicIp = sh(script: "grep 'PUBLIC_IP' ${WORKSPACE}/LMS_DEVOPS_Project/new_ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
-                        def publicDns = sh(script: "grep 'PUBLIC_DNS' ${WORKSPACE}/LMS_DEVOPS_Project/new_ec2_info.txt | cut -d= -f2", returnStdout: true).trim()
-                        
-                        if (publicIp && publicDns) {
-                            env.REMOTE_HOST = publicIp
-                            env.EC2_HOST = publicDns
-                            env.DJANGO_ALLOWED_HOSTS = "${publicIp},${publicDns},localhost,127.0.0.1"
-                            
-                            echo "Updated EC2 details from newly created instance:"
-                            echo "REMOTE_HOST=${env.REMOTE_HOST}"
-                            echo "EC2_HOST=${env.EC2_HOST}"
-                        }
                     }
                 }
             }
         }
 
         stage('Check EC2 Connectivity') {
+            when {
+                expression { return env.EC2_AVAILABLE == 'true' }
+            }
             steps {
                 script {
                     try {
                         withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
                             sh '''
-                            # Test SSH connection with short timeout
-                            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -i $SSH_KEY $EC2_USER@$EC2_HOST "echo EC2 connection successful"
+                            # Test SSH connection with increased timeout
+                            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i $SSH_KEY $EC2_USER@$EC2_HOST "echo EC2 connection successful"
                             '''
                         }
                         echo "EC2 connection successful"
                         env.EC2_AVAILABLE = 'true'
                     } catch (Exception e) {
-                        echo "EC2 instance is not accessible: ${e.message}"
+                        echo "EC2 instance is not accessible via SSH: ${e.message}"
                         echo "This could be because:"
                         echo "1. The instance was just created and needs more time to initialize"
                         echo "2. The SSH key pair is not correctly set up"
                         echo "3. The security group doesn't allow SSH access"
-                        env.EC2_AVAILABLE = 'false'
+                        echo "4. The instance is in a different region than expected"
+                        
+                        // Since instance exists but SSH is failing, keep EC2_AVAILABLE true
+                        // but warn the user - they might need to fix SSH access manually
+                        env.EC2_AVAILABLE = 'warning'
                     }
                 }
             }
@@ -509,6 +443,10 @@ EOL
                     string(credentialsId: 'django-secret-key', variable: 'SECRET_KEY')
                 ]) {
                     sh '''
+                    # Print relevant environment variables
+                    echo "Deploying to EC2 at ${EC2_HOST} (${REMOTE_HOST})"
+                    echo "Using allowed hosts: ${DJANGO_ALLOWED_HOSTS}"
+                    
                     # Execute deployment script on EC2
                     ssh -o StrictHostKeyChecking=no -i $SSH_KEY $EC2_USER@$EC2_HOST << EOF
                     # Define variables on the remote server
@@ -576,14 +514,19 @@ EOF
                 script {
                     echo "=============================================="
                     echo "CI/CD Pipeline executed successfully!"
-                    echo "Application built successfully"
+                    echo "Application built and published to Docker Hub"
+                    
                     if (env.EC2_AVAILABLE == 'true') {
-                        echo "Application deployed to ${EC2_HOST}"
+                        echo "Application deployed to EC2 at ${EC2_HOST}"
                         echo "You can access the application at: http://${REMOTE_HOST}:8000"
+                    } else if (env.EC2_AVAILABLE == 'warning') {
+                        echo "⚠️ WARNING: EC2 instance exists but SSH connection failed"
+                        echo "Application deployment skipped - manual intervention required"
+                        echo "Please check SSH key and security group settings"
                     } else {
                         echo "EC2 deployment skipped - instance not available"
-                        echo "Check AWS console and try again"
                     }
+                    
                     echo "MongoDB connection configured correctly"
                     echo "=============================================="
                 }
@@ -613,6 +556,11 @@ EOF
                             }
                         } else {
                             echo "EC2 instance not available - skipping container logs"
+                            
+                            if (fileExists("${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt")) {
+                                echo "EC2 information from setup process:"
+                                sh "cat ${WORKSPACE}/LMS_DEVOPS_Project/ec2_info.txt"
+                            }
                         }
                     } catch (Exception e) {
                         echo "Could not execute SSH commands: ${e.message}"
@@ -626,6 +574,12 @@ EOF
                 // Clean up workspace safely
                 script {
                     try {
+                        // Cleanup virtual environments
+                        sh '''
+                        rm -rf $WORKSPACE/aws_cli_env || true
+                        rm -rf /tmp/mongo_test_env || true
+                        '''
+                        
                         cleanWs(cleanWhenNotBuilt: false,
                                 deleteDirs: true,
                                 disableDeferredWipeout: true,

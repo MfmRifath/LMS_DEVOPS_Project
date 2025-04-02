@@ -1,16 +1,25 @@
 #!/bin/bash
-# Install required Ansible collections for AWS
+# Improved setup script for Ansible on macOS in Jenkins
 
-# Install Ansible if not installed
-if ! command -v ansible &> /dev/null; then
-    echo "Installing Ansible..."
-    pip install ansible
-fi
+echo "Setting up Python virtual environment for Ansible..."
+python3 -m venv ansible_venv
+source ansible_venv/bin/activate
 
-# Install required collections
+echo "Installing pip packages..."
+python3 -m pip install --upgrade pip
+python3 -m pip install ansible boto3 botocore
+
 echo "Installing Ansible AWS collection..."
-ansible-galaxy collection install amazon.aws
+python3 -m ansible.modules.galaxy.collection install amazon.aws
 
-# Install required Python packages
-echo "Installing required Python packages..."
-pip install boto3 botocore
+echo "Testing Ansible installation..."
+python3 -m ansible --version
+
+echo "Creating ansible.cfg file..."
+cat > ansible.cfg << 'EOL'
+[defaults]
+host_key_checking = False
+interpreter_python = auto_silent
+EOL
+
+echo "Environment ready for Ansible!"

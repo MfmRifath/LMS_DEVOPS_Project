@@ -249,7 +249,7 @@ EOF
 
     post {
         success {
-            node {
+            node(null) {  // Use null to run on any available node
                 echo "=============================================="
                 echo "CI/CD Pipeline executed successfully!"
                 echo "Application deployed to ${EC2_HOST}"
@@ -259,7 +259,7 @@ EOF
         }
         
         failure {
-            node {
+            node(null) {  // Use null to run on any available node
                 echo "=============================================="
                 echo "CI/CD Pipeline failed. Check the logs for details."
                 echo "=============================================="
@@ -287,7 +287,7 @@ EOF
         }
         
         always {
-            node {
+            node(null) {  // Use null to run on any available node
                 // Clean up workspace safely
                 script {
                     try {

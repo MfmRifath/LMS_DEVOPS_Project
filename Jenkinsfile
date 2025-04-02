@@ -259,7 +259,7 @@ EOL
                 # Test AWS CLI
                 aws --version
                 
-                # Create AWS credentials file
+                # Create AWS credentials directory (but not file yet)
                 mkdir -p ~/.aws
                 
                 deactivate
@@ -276,8 +276,12 @@ EOL
                     sh '''
                     cd $WORKSPACE/LMS_DEVOPS_Project
                     
-                    # Setup AWS credentials file
+                    # Setup AWS credentials file with proper permissions
                     mkdir -p ~/.aws
+                    touch ~/.aws/credentials ~/.aws/config
+                    chmod 600 ~/.aws/credentials ~/.aws/config
+
+                    # Write credentials to file (securely)
                     cat > ~/.aws/credentials << EOL
 [default]
 aws_access_key_id = ${AWS_ACCESS_KEY_ID}
@@ -292,6 +296,17 @@ EOL
                     
                     # Activate AWS CLI environment
                     source $WORKSPACE/aws_cli_env/bin/activate
+                    
+                    # Verify AWS authentication works before proceeding
+                    echo "=== Testing AWS Authentication ==="
+                    if ! aws sts get-caller-identity; then
+                        echo "ERROR: AWS authentication failed. Check your credentials."
+                        echo "Recommended actions:"
+                        echo "1. Verify the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in Jenkins credentials"
+                        echo "2. Ensure the IAM user has appropriate permissions"
+                        echo "3. Check if AWS credentials are expired"
+                        exit 1
+                    fi
                     
                     # Check if EC2 instance exists
                     echo "Checking for existing EC2 instance with tag Name=${EC2_NAME_TAG}..."
@@ -372,6 +387,9 @@ INSTANCE_STATE=running
 PUBLIC_IP=$PUBLIC_IP
 PUBLIC_DNS=$PUBLIC_DNS
 EOL
+                    
+                    # Clean up for security
+                    rm -f ~/.aws/credentials
                     
                     deactivate
                     '''
@@ -583,6 +601,11 @@ EOF
                         sh '''
                         rm -rf $WORKSPACE/aws_cli_env || true
                         rm -rf /tmp/mongo_test_env || true
+                        '''
+                        
+                        // Secure cleanup of AWS credentials
+                        sh '''
+                        rm -f ~/.aws/credentials || true
                         '''
                         
                         // Manual cleanup instead of cleanWs

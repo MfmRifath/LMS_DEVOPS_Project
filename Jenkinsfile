@@ -8,7 +8,7 @@ pipeline {
         DOCKER_HUB_REPO    = "rifathmfm/lms_django"
         
         // Server details - these will be updated during the pipeline
-        EC2_USER           = "ubuntu"
+        EC2_USER           = "s2oadmin"
         APP_DIR            = "/var/www/lms_backend"
         
         // Docker path (adjust as needed for your Jenkins server)

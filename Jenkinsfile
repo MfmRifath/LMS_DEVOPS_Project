@@ -19,6 +19,9 @@ pipeline {
         // Credentials and secrets
         DJANGO_ALLOWED_HOSTS = "${REMOTE_HOST},localhost,127.0.0.1"
         DEBUG              = "0"
+        
+        // Flag for EC2 availability (initialized to false)
+        EC2_AVAILABLE      = "false"
     }
 
     stages {
@@ -173,6 +176,7 @@ EOL
                             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i $SSH_KEY $EC2_USER@$EC2_HOST "echo EC2 connection successful"
                             '''
                         }
+                        echo "EC2 connection successful"
                         env.EC2_AVAILABLE = 'true'
                     } catch (Exception e) {
                         echo "EC2 instance is not accessible: ${e.message}"
@@ -257,16 +261,18 @@ EOF
     post {
         success {
             node(null) {
-                echo "=============================================="
-                echo "CI/CD Pipeline executed successfully!"
-                echo "Application built successfully"
-                if (env.EC2_AVAILABLE == 'true') {
-                    echo "Application deployed to ${EC2_HOST}"
-                } else {
-                    echo "EC2 deployment skipped - instance not available"
+                script {
+                    echo "=============================================="
+                    echo "CI/CD Pipeline executed successfully!"
+                    echo "Application built successfully"
+                    if (env.EC2_AVAILABLE == 'true') {
+                        echo "Application deployed to ${EC2_HOST}"
+                    } else {
+                        echo "EC2 deployment skipped - instance not available"
+                    }
+                    echo "MongoDB connection configured correctly"
+                    echo "=============================================="
                 }
-                echo "MongoDB connection configured correctly"
-                echo "=============================================="
             }
         }
         
@@ -277,8 +283,8 @@ EOF
                 echo "=============================================="
                 
                 script {
-                    if (env.EC2_AVAILABLE == 'true') {
-                        try {
+                    try {
+                        if (env.EC2_AVAILABLE == 'true') {
                             withCredentials([sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')]) {
                                 sh '''
                                 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i $SSH_KEY $EC2_USER@$EC2_HOST '
@@ -291,11 +297,11 @@ EOF
                                 '
                                 '''
                             }
-                        } catch (Exception e) {
-                            echo "Could not execute SSH commands: ${e.message}"
+                        } else {
+                            echo "EC2 instance not available - skipping container logs"
                         }
-                    } else {
-                        echo "EC2 instance not available - skipping container logs"
+                    } catch (Exception e) {
+                        echo "Could not execute SSH commands: ${e.message}"
                     }
                 }
             }

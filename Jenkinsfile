@@ -508,7 +508,7 @@ EOF
                 
                 # Secure cleanup of AWS credentials
                 rm -f ~/.aws/credentials || true
-                
+                  
                 # Manual cleanup instead of cleanWs
                 find $WORKSPACE -name "venv" -type d -exec rm -rf {} + || true
                 '''
